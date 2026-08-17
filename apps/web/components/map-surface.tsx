@@ -135,7 +135,7 @@ function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[
       { id: "event-points", type: "circle", source: "events", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"]], paint: { "circle-radius": 5, "circle-color": ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "#22c7a8"], "circle-stroke-color": "#09111b", "circle-stroke-width": 1.5 } },
       { id: "infrastructure-rail-lines", type: "line", source: "infrastructure", filter: ["==", ["get", "assetType"], "rail_corridor"], paint: { "line-color": "#6ab6ff", "line-width": 2.4, "line-opacity": 0.82, "line-dasharray": [1, 1.5] } },
       { id: "infrastructure-port-points", type: "circle", source: "infrastructure", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "assetType"], "port"]], paint: { "circle-radius": 6, "circle-color": "#f1ad38", "circle-stroke-color": "#15100a", "circle-stroke-width": 1.5 } },
-      { id: "infrastructure-other-points", type: "circle", source: "infrastructure", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 5, "circle-color": "#a986f5", "circle-stroke-color": "#15101f", "circle-stroke-width": 1.5 } },
+      { id: "infrastructure-other-points", type: "circle", source: "infrastructure", filter: ["all", ["==", ["geometry-type"], "Point"], ["!=", ["get", "assetType"], "port"]], paint: { "circle-radius": 5, "circle-color": "#a986f5", "circle-stroke-color": "#15101f", "circle-stroke-width": 1.5 } },
     ],
   };
 }
