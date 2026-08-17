@@ -62,6 +62,53 @@ class EventListResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class InfrastructureProvenance(BaseModel):
+    source_record_id: str
+    source_url: str
+    source_name: str
+    attribution: str
+    license: str
+    fetched_at: datetime
+    raw_record_id: str | None = None
+    adapter_version: str
+    payload_hash: str
+
+
+class InfrastructureResponse(BaseModel):
+    id: str
+    source_id: str
+    source_key: str
+    source_name: str
+    source_url: str
+    source_attribution: str
+    source_license: str
+    source_asset_id: str
+    name: str
+    type: str
+    subtype: str | None = None
+    operator: str | None = None
+    owner: str | None = None
+    status: str | None = None
+    region: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    geometry_type: str
+    geometry: dict[str, Any]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    classification: str = "REFERENCE"
+    source_updated_at: datetime | None = None
+    imported_at: datetime
+    updated_at: datetime
+    provenance: list[InfrastructureProvenance] = Field(default_factory=list)
+
+
+class InfrastructureListResponse(BaseModel):
+    items: list[InfrastructureResponse]
+    total: int
+    limit: int
+    next_cursor: str | None = None
+
+
 class HealthResponse(BaseModel):
     status: str
     service: str
@@ -69,4 +116,3 @@ class HealthResponse(BaseModel):
     database: str
     sources: list[SourceResponse]
     generated_at: datetime
-

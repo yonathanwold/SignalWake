@@ -16,10 +16,33 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import Text as SQLText
+from sqlalchemy.types import TypeDecorator, UserDefinedType
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class _PostGISGeometryImpl(UserDefinedType):
+    """PostGIS column declaration used only by the PostgreSQL dialect."""
+
+    cache_ok = True
+
+    def get_col_spec(self, **kwargs):  # noqa: ARG002 - SQLAlchemy type protocol
+        return "geometry(Geometry,4326)"
+
+
+class PostGISGeometry(TypeDecorator):
+    """PostGIS geometry on production, text storage for SQLite tests."""
+
+    impl = SQLText
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(_PostGISGeometryImpl())
+        return dialect.type_descriptor(SQLText())
 
 
 class SourceKind(str, enum.Enum):
@@ -52,6 +75,10 @@ class ProcessingState(str, enum.Enum):
     REJECTED = "rejected"
 
 
+class InfrastructureClassification(str, enum.Enum):
+    REFERENCE = "REFERENCE"
+
+
 class Source(Base):
     __tablename__ = "sources"
 
@@ -70,6 +97,85 @@ class Source(Base):
 
     raw_observations: Mapped[list[RawObservation]] = relationship(back_populates="source")
     events: Mapped[list[Event]] = relationship(back_populates="source")
+
+
+class InfrastructureSource(Base):
+    __tablename__ = "infrastructure_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(256))
+    endpoint: Mapped[str] = mapped_column(String(1024))
+    attribution: Mapped[str] = mapped_column(String(512))
+    license: Mapped[str] = mapped_column(String(512))
+    adapter_version: Mapped[str] = mapped_column(String(32), default="1.0.0")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_import_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_import_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_import_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    raw_records: Mapped[list[RawInfrastructureRecord]] = relationship(back_populates="source")
+    assets: Mapped[list[InfrastructureAsset]] = relationship(back_populates="source")
+
+
+class RawInfrastructureRecord(Base):
+    __tablename__ = "raw_infrastructure_records"
+    __table_args__ = (
+        UniqueConstraint("source_id", "payload_hash", name="uq_raw_infrastructure_source_payload"),
+        Index("ix_raw_infrastructure_source_record", "source_id", "source_record_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_id: Mapped[str] = mapped_column(ForeignKey("infrastructure_sources.id"), index=True)
+    source_record_id: Mapped[str] = mapped_column(String(512), index=True)
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload: Mapped[str] = mapped_column(Text)
+    payload_hash: Mapped[str] = mapped_column(String(64), index=True)
+    processing_state: Mapped[str] = mapped_column(String(32), default=ProcessingState.RECEIVED.value)
+    adapter_version: Mapped[str] = mapped_column(String(32))
+
+    source: Mapped[InfrastructureSource] = relationship(back_populates="raw_records")
+
+
+class InfrastructureAsset(Base):
+    __tablename__ = "infrastructure_assets"
+    __table_args__ = (
+        UniqueConstraint("source_id", "source_asset_id", name="uq_infrastructure_source_asset"),
+        Index("ix_infrastructure_asset_type_region", "asset_type", "region"),
+        Index("ix_infrastructure_asset_source_type", "source_id", "asset_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_id: Mapped[str] = mapped_column(ForeignKey("infrastructure_sources.id"), index=True)
+    raw_infrastructure_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("raw_infrastructure_records.id"), nullable=True, index=True
+    )
+    source_asset_id: Mapped[str] = mapped_column(String(512), index=True)
+    name: Mapped[str] = mapped_column(String(512))
+    asset_type: Mapped[str] = mapped_column(String(64), index=True)
+    asset_subtype: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    operator: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    owner: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    region: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    geometry_type: Mapped[str] = mapped_column(String(32))
+    geometry_geojson: Mapped[str] = mapped_column(Text)
+    # The migration uses PostGIS geometry(Geometry, 4326). SQLite stores no value here;
+    # geometry_geojson remains the deterministic test/dev representation.
+    geometry: Mapped[str | None] = mapped_column(PostGISGeometry(), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    provenance_json: Mapped[str] = mapped_column(Text, default="[]")
+    payload_hash: Mapped[str] = mapped_column(String(64), index=True)
+    classification: Mapped[str] = mapped_column(String(16), default=InfrastructureClassification.REFERENCE.value)
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    normalized_version: Mapped[str] = mapped_column(String(32))
+
+    source: Mapped[InfrastructureSource] = relationship(back_populates="assets")
 
 
 class RawObservation(Base):

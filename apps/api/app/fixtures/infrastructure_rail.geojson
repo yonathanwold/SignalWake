@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "name": "FRA Rail Lines representative fixture",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "RAIL-VA-001",
+      "properties": {
+        "OBJECTID": "RAIL-VA-001",
+        "RAILROAD": "Demo Eastern Freight",
+        "SUBDIVISION": "Tidewater",
+        "STATE": "VA",
+        "STATUS": "Active",
+        "LAST_EDITED_DATE": "2026-08-14T09:00:00Z"
+      },
+      "geometry": {"type": "LineString", "coordinates": [[-77.1, 37.0], [-76.9, 37.15], [-76.65, 37.3]]}
+    },
+    {
+      "type": "Feature",
+      "id": "RAIL-TX-002",
+      "properties": {
+        "OBJECTID": "RAIL-TX-002",
+        "RAILROAD": "Demo Gulf Freight",
+        "SUBDIVISION": "Coastal",
+        "STATE": "TX",
+        "STATUS": "Active"
+      },
+      "geometry": {"type": "LineString", "coordinates": [[-95.1, 29.2], [-94.9, 29.35], [-94.55, 29.5]]}
+    }
+  ]
+}

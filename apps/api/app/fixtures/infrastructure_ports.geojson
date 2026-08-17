@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "name": "BTS Port Facilities representative fixture",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "PORT-VA-001",
+      "properties": {
+        "OBJECTID": "PORT-VA-001",
+        "PORT_NAME": "Demo Hampton Roads Terminal",
+        "PORT_TYPE": "Marine terminal",
+        "STATE": "VA",
+        "OPERATOR": "Example Port Authority",
+        "LAST_EDITED_DATE": "2026-08-16T12:00:00Z"
+      },
+      "geometry": {"type": "Point", "coordinates": [-76.34, 36.95]}
+    },
+    {
+      "type": "Feature",
+      "id": "PORT-TX-002",
+      "properties": {
+        "OBJECTID": "PORT-TX-002",
+        "PORT_NAME": "Demo Gulf Container Terminal",
+        "PORT_TYPE": "Container terminal",
+        "STATE": "TX",
+        "LAST_EDITED_DATE": "2026-08-15T10:30:00Z"
+      },
+      "geometry": {"type": "Point", "coordinates": [-94.72, 29.36]}
+    }
+  ]
+}

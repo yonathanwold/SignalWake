@@ -18,8 +18,21 @@ from app.database import create_engine, init_db, session_factory
 from app.ingest import ensure_source, ingest_once, persist_normalized
 from app.logging import configure_logging
 from app.models import Event, Source
-from app.repository import get_event, list_events, source_response
-from app.schemas import EventListResponse, EventResponse, HealthResponse, SourceResponse
+from app.repository import (
+    get_event,
+    get_infrastructure,
+    list_events,
+    list_infrastructure,
+    source_response,
+)
+from app.schemas import (
+    EventListResponse,
+    EventResponse,
+    HealthResponse,
+    InfrastructureListResponse,
+    InfrastructureResponse,
+    SourceResponse,
+)
 
 log = structlog.get_logger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
@@ -190,3 +203,45 @@ async def event_detail(
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
+
+
+@app.get("/infrastructure", response_model=InfrastructureListResponse, tags=["infrastructure"])
+async def infrastructure(
+    bbox: str | None = Query(None, description="minLon,minLat,maxLon,maxLat"),
+    type: str | None = Query(None, description="Canonical asset type, e.g. port or rail_corridor"),
+    source: str | None = Query(None, description="Infrastructure source key"),
+    region: str | None = Query(None, description="Source-provided region, usually state/territory"),
+    limit: int = Query(100, ge=1, le=500),
+    cursor: int = Query(0, ge=0),
+    page: int | None = Query(None, ge=1),
+    session: AsyncSession = Depends(session_dependency),
+) -> InfrastructureListResponse:
+    offset = (page - 1) * limit if page else cursor
+    try:
+        items, total, next_offset = await list_infrastructure(
+            session,
+            bbox=bbox,
+            asset_type=type,
+            source=source,
+            region=region,
+            limit=limit,
+            cursor=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return InfrastructureListResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        next_cursor=str(next_offset) if next_offset is not None else None,
+    )
+
+
+@app.get("/infrastructure/{asset_id}", response_model=InfrastructureResponse, tags=["infrastructure"])
+async def infrastructure_detail(
+    asset_id: str, session: AsyncSession = Depends(session_dependency)
+) -> InfrastructureResponse:
+    asset = await get_infrastructure(session, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Infrastructure asset not found")
+    return asset
