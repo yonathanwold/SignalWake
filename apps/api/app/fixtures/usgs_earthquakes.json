@@ -1,0 +1,18 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {"mag": 4.6, "place": "12 km N of Demo Ridge", "time": 1786972200000, "title": "M 4.6 - 12 km N of Demo Ridge"},
+      "geometry": {"type": "Point", "coordinates": [-118.2437, 34.0522, 11.2]},
+      "id": "demo-usgs-001"
+    },
+    {
+      "type": "Feature",
+      "properties": {"mag": 3.2, "place": "8 km W of Demo Bay", "time": 1786970400000, "title": "M 3.2 - 8 km W of Demo Bay"},
+      "geometry": {"type": "Point", "coordinates": [-122.4194, 37.7749, 7.4]},
+      "id": "demo-usgs-002"
+    }
+  ]
+}
+
