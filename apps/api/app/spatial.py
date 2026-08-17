@@ -212,6 +212,12 @@ def geometry_intersects(first: dict[str, Any], second: dict[str, Any]) -> bool:
         return True
     if left["type"] == "Point" and right["type"] == "Point":
         return tuple(left["coordinates"]) == tuple(right["coordinates"])
+    if left["type"] == "Point":
+        point = tuple(left["coordinates"])
+        return any(_on_segment(start, end, point) for line in _as_lines(right) for start, end in _segments(line))
+    if right["type"] == "Point":
+        point = tuple(right["coordinates"])
+        return any(_on_segment(start, end, point) for line in _as_lines(left) for start, end in _segments(line))
     left_lines = _as_lines(left)
     right_lines = _as_lines(right)
     return any(_segments_intersect(a, b, c, d) for line in left_lines for a, b in _segments(line) for other in right_lines for c, d in _segments(other))

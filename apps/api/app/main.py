@@ -15,9 +15,17 @@ from app.adapters.nws import NWSAdapter
 from app.adapters.usgs import USGSAdapter
 from app.config import Settings, get_settings
 from app.database import create_engine, init_db, session_factory
+from app.derivation import DerivationSettings, rebuild_derived_relationships
+from app.graph import GraphEdge, GraphEngine
+from app.graph_repository import (
+    edge_between,
+    edge_response,
+    load_graph_context,
+    node_response,
+)
 from app.ingest import ensure_source, ingest_once, persist_normalized
 from app.logging import configure_logging
-from app.models import Event, Source
+from app.models import Event, InfrastructureRelationshipType, Source
 from app.repository import (
     get_event,
     get_infrastructure,
@@ -28,6 +36,13 @@ from app.repository import (
 from app.schemas import (
     EventListResponse,
     EventResponse,
+    GraphMetricsResponse,
+    GraphNeighborsResponse,
+    GraphNodeListResponse,
+    GraphNodeResponse,
+    GraphPathResponse,
+    GraphRebuildResponse,
+    GraphSubgraphResponse,
     HealthResponse,
     InfrastructureListResponse,
     InfrastructureResponse,
@@ -131,7 +146,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -245,3 +260,221 @@ async def infrastructure_detail(
     if asset is None:
         raise HTTPException(status_code=404, detail="Infrastructure asset not found")
     return asset
+
+
+GRAPH_RELATIONSHIP_TYPES = {item.value for item in InfrastructureRelationshipType}
+GRAPH_MAX_LIMIT = 200
+
+
+def _relationship_filter(value: str | None) -> set[str] | None:
+    if not value:
+        return None
+    values = {item.strip().upper() for item in value.split(",") if item.strip()}
+    invalid = values - GRAPH_RELATIONSHIP_TYPES
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unsupported relationship type(s): {', '.join(sorted(invalid))}")
+    return values
+
+
+def _nodes_by_id(assets):
+    return {asset.id: asset for asset in assets}
+
+
+def _path_edges(engine: GraphEngine, path: list[str], relationship_types: set[str] | None) -> list[GraphEdge]:
+    edges: list[GraphEdge] = []
+    for from_id, to_id in zip(path, path[1:]):
+        candidates = [
+            edge
+            for edge in engine.edges.values()
+            if engine._allowed(edge, relationship_types)
+            and ((edge.from_id == from_id and edge.to_id == to_id) or (edge.directionality != "DIRECTED" and edge.from_id == to_id and edge.to_id == from_id))
+        ]
+        if candidates:
+            edges.append(sorted(candidates, key=lambda edge: (edge.relationship_type, edge.id))[0])
+    return edges
+
+
+@app.get("/graph/nodes", response_model=GraphNodeListResponse, tags=["graph"])
+async def graph_nodes(
+    type: str | None = Query(None, description="Canonical asset type"),
+    region: str | None = Query(None),
+    source: str | None = Query(None, description="Infrastructure source key"),
+    limit: int = Query(50, ge=1, le=GRAPH_MAX_LIMIT),
+    cursor: int = Query(0, ge=0),
+    page: int | None = Query(None, ge=1),
+    session: AsyncSession = Depends(session_dependency),
+) -> GraphNodeListResponse:
+    assets, engine = await load_graph_context(session)
+    filtered = [
+        asset
+        for asset in assets
+        if (not type or asset.asset_type == type)
+        and (not region or asset.region == region)
+        and (not source or (asset.source and asset.source.key == source.lower()))
+    ]
+    offset = (page - 1) * limit if page else cursor
+    visible = filtered[offset : offset + limit + 1]
+    next_cursor = str(offset + limit) if len(visible) > limit else None
+    return GraphNodeListResponse(
+        items=[node_response(asset, engine) for asset in visible[:limit]],
+        total=len(filtered),
+        limit=limit,
+        next_cursor=next_cursor,
+    )
+
+
+@app.get("/graph/nodes/{node_id}", response_model=GraphNodeResponse, tags=["graph"])
+async def graph_node_detail(
+    node_id: str, session: AsyncSession = Depends(session_dependency)
+) -> GraphNodeResponse:
+    assets, engine = await load_graph_context(session)
+    asset = _nodes_by_id(assets).get(node_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Graph node not found")
+    return node_response(asset, engine)
+
+
+@app.get("/graph/nodes/{node_id}/neighbors", response_model=GraphNeighborsResponse, tags=["graph"])
+async def graph_node_neighbors(
+    node_id: str,
+    relationship_type: str | None = Query(None, description="One or comma-separated relationship types"),
+    direction: str = Query("both", pattern="^(both|in|out)$"),
+    depth: int = Query(1, ge=1, le=4),
+    limit: int = Query(50, ge=1, le=GRAPH_MAX_LIMIT),
+    session: AsyncSession = Depends(session_dependency),
+) -> GraphNeighborsResponse:
+    relationship_types = _relationship_filter(relationship_type)
+    assets, engine = await load_graph_context(session, relationship_types=relationship_types)
+    asset_map = _nodes_by_id(assets)
+    root = asset_map.get(node_id)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Graph node not found")
+    selected_edges = [
+        edge for edge in engine.edges.values() if not relationship_types or edge.relationship_type in relationship_types
+    ]
+    if direction != "both" and any(edge.directionality != "DIRECTED" for edge in selected_edges):
+        raise HTTPException(status_code=400, detail="Current relationships are undirected; use direction=both")
+    neighbor_ids = engine.neighbor_ids(
+        node_id,
+        depth=depth,
+        limit=limit,
+        direction=direction,
+        relationship_types=relationship_types,
+    )
+    visible_ids = {node_id, *neighbor_ids}
+    return GraphNeighborsResponse(
+        root=node_response(root, engine, relationship_types=relationship_types),
+        nodes=[node_response(asset_map[item], engine, relationship_types=relationship_types) for item in neighbor_ids],
+        edges=edge_between(engine, visible_ids),
+        depth=depth,
+        limit=limit,
+    )
+
+
+@app.get("/graph/paths", response_model=GraphPathResponse, tags=["graph"])
+async def graph_paths(
+    from_node: str = Query(..., alias="from"),
+    to_node: str = Query(..., alias="to"),
+    max_hops: int = Query(8, ge=0, le=20),
+    relationship_types: str | None = Query(None, description="One or comma-separated relationship types"),
+    session: AsyncSession = Depends(session_dependency),
+) -> GraphPathResponse:
+    selected_types = _relationship_filter(relationship_types)
+    assets, engine = await load_graph_context(session, relationship_types=selected_types)
+    asset_map = _nodes_by_id(assets)
+    if from_node not in asset_map or to_node not in asset_map:
+        raise HTTPException(status_code=404, detail="One or both graph nodes not found")
+    path = engine.shortest_path(from_node, to_node, max_hops=max_hops, relationship_types=selected_types)
+    if path is None:
+        raise HTTPException(status_code=404, detail="No path exists within max_hops")
+    edge_path = _path_edges(engine, path, selected_types)
+    return GraphPathResponse(
+        from_node_id=from_node,
+        to_node_id=to_node,
+        max_hops=max_hops,
+        hops=len(path) - 1,
+        nodes=[node_response(asset_map[item], engine, relationship_types=selected_types) for item in path],
+        edges=[edge_response(edge) for edge in edge_path],
+    )
+
+
+@app.get("/graph/subgraph", response_model=GraphSubgraphResponse, tags=["graph"])
+async def graph_subgraph(
+    root: str = Query(...),
+    depth: int = Query(2, ge=0, le=4),
+    relationship_type: str | None = Query(None),
+    type: str | None = Query(None, description="Optional node type filter"),
+    region: str | None = Query(None),
+    max_nodes: int = Query(50, ge=1, le=GRAPH_MAX_LIMIT),
+    session: AsyncSession = Depends(session_dependency),
+) -> GraphSubgraphResponse:
+    selected_types = _relationship_filter(relationship_type)
+    assets, full_engine = await load_graph_context(session, relationship_types=selected_types)
+    asset_map = _nodes_by_id(assets)
+    if root not in asset_map:
+        raise HTTPException(status_code=404, detail="Graph root node not found")
+    allowed_ids = {
+        asset.id
+        for asset in assets
+        if asset.id == root or ((not type or asset.asset_type == type) and (not region or asset.region == region))
+    }
+    filtered_engine = GraphEngine(
+        [node for node in full_engine.nodes.values() if node.id in allowed_ids],
+        [edge for edge in full_engine.edges.values() if edge.from_id in allowed_ids and edge.to_id in allowed_ids],
+    )
+    selected_nodes, selected_edges, truncated = filtered_engine.subgraph(
+        root, depth=depth, max_nodes=max_nodes, relationship_types=selected_types
+    )
+    selected_ids = {node.id for node in selected_nodes}
+    return GraphSubgraphResponse(
+        root_node_id=root,
+        depth=depth,
+        max_nodes=max_nodes,
+        truncated=truncated,
+        nodes=[node_response(asset_map[node.id], filtered_engine, relationship_types=selected_types) for node in selected_nodes],
+        edges=[edge_response(edge) for edge in selected_edges if edge.from_id in selected_ids and edge.to_id in selected_ids],
+    )
+
+
+@app.get("/graph/metrics", response_model=GraphMetricsResponse, tags=["graph"])
+async def graph_metrics(
+    node_id: str | None = Query(None),
+    type: str | None = Query(None),
+    region: str | None = Query(None),
+    source: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=GRAPH_MAX_LIMIT),
+    session: AsyncSession = Depends(session_dependency),
+) -> GraphMetricsResponse:
+    assets, engine = await load_graph_context(session)
+    if node_id:
+        assets = [asset for asset in assets if asset.id == node_id]
+        if not assets:
+            raise HTTPException(status_code=404, detail="Graph node not found")
+    else:
+        assets = [
+            asset for asset in assets
+            if (not type or asset.asset_type == type)
+            and (not region or asset.region == region)
+            and (not source or (asset.source and asset.source.key == source.lower()))
+        ][:limit]
+    return GraphMetricsResponse(
+        items=[node_response(asset, engine) for asset in assets],
+        total=len(assets),
+        limit=limit,
+    )
+
+
+@app.post("/graph/rebuild", response_model=GraphRebuildResponse, tags=["graph"])
+async def graph_rebuild(
+    endpoint_tolerance_m: float = Query(100.0, gt=0, le=1000),
+    adjacency_distance_km: float = Query(25.0, gt=0, le=200),
+    session: AsyncSession = Depends(session_dependency),
+) -> GraphRebuildResponse:
+    stats = await rebuild_derived_relationships(
+        session,
+        DerivationSettings(
+            endpoint_tolerance_m=endpoint_tolerance_m,
+            adjacency_distance_km=adjacency_distance_km,
+        ),
+    )
+    return GraphRebuildResponse.model_validate(stats.as_dict())
