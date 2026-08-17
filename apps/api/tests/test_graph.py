@@ -134,3 +134,13 @@ async def test_graph_api_bounds_filters_and_provenance(db_factory):
         assert neighbors.json()["edges"][0]["evidence"]["assets"]
         assert (await client.get(f"/graph/nodes/{node_id}/neighbors", params={"direction": "in"})).status_code == 400
         assert (await client.get("/graph/subgraph", params={"root": node_id, "max_nodes": 1})).status_code == 200
+        all_nodes = (await client.get("/graph/nodes", params={"limit": 10})).json()["items"]
+        rail = next(node for node in all_nodes if node["asset"]["source_asset_id"] == "RAIL-TX-002")
+        path = await client.get("/graph/paths", params={"from": node_id, "to": rail["id"], "max_hops": 2})
+        assert path.status_code == 200
+        assert path.json()["hops"] == 1
+        assert path.json()["edges"][0]["derivation_method"] == "port_rail_distance_and_region"
+        metrics = await client.get("/graph/metrics", params={"node_id": node_id})
+        assert metrics.status_code == 200
+        assert metrics.json()["items"][0]["metrics"]["degree"] == 1
+        assert (await client.get("/graph/paths", params={"from": node_id, "to": rail["id"], "max_hops": 0})).status_code == 404
