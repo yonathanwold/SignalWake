@@ -21,3 +21,29 @@
 When `INGEST_ON_STARTUP=true` (the default), the API runs one bounded fetch/normalize/persist pass for NWS and USGS during startup. Each source records `last_attempt_at`, `last_success_at`, `last_http_status`, `last_error`, and `freshness_seconds`. Valid features become `LIVE` canonical events with their raw payload and provenance; malformed features are logged and skipped while the remaining features continue.
 
 The pass is idempotent by source-scoped record identity and payload hash. `USE_DEMO_DATA=true` is only a fallback: fixture rows are seeded for a source when its live fetch fails or produces no usable events, and never replace a source that produced successful `LIVE` events. No permanent queue or scheduler is included in Phase 1; a later worker can call the same service boundary. The API never fabricates freshness: unavailable values are represented as `null`/`UNKNOWN`, and a source error is surfaced as `ERROR`.
+
+## Infrastructure reference sources
+
+Phase 2 uses two separate public U.S. Department of Transportation datasets. They are imported as `REFERENCE` assets, not as live observations:
+
+### BTS Port Facilities
+
+- Dataset page: [BTS Port Facilities](https://data-usdot.opendata.arcgis.com/datasets/usdot::port-facilities/about)
+- Publisher: U.S. Department of Transportation, Bureau of Transportation Statistics.
+- Useful fields: stable facility/object ID, port/facility name, facility type, state/region, and geometry. Operator/owner/status are retained only when supplied.
+- Attribution: identify BTS and link to the dataset page in downstream use.
+- Licensing: U.S. Government public data; review the current dataset page and export terms before redistribution. SIGNALWAKE does not claim a separate license for the source data.
+
+### FRA Rail Lines
+
+- Dataset page: [FRA Rail Lines](https://data-usdot.opendata.arcgis.com/datasets/usdot::rail-lines/about)
+- Publisher: U.S. Department of Transportation, Federal Railroad Administration.
+- Useful fields: stable line/object ID, railroad or route name, subdivision/type, state/region, status when supplied, and LineString geometry.
+- Attribution: identify FRA and link to the dataset page in downstream use.
+- Licensing: U.S. Government public data; review the current dataset page and export terms before redistribution. SIGNALWAKE does not claim a separate license for the source data.
+
+The source URLs above are authoritative landing pages. The importer accepts a downloaded GeoJSON export or a caller-supplied URL that returns GeoJSON; it does not scrape HTML landing pages or silently fetch an unbounded national dataset. The checked-in `infrastructure_ports.geojson` and `infrastructure_rail.geojson` files are representative fixtures for deterministic tests only.
+
+## Infrastructure import provenance
+
+Every asset retains its source key and stable source record ID, source URL/name, attribution, license note, fetch time, adapter version, payload hash, and raw record ID. Changed source payloads update the canonical asset by `(source_id, source_asset_id)`; repeated payloads do not create duplicate raw or asset rows. `source_updated_at` is null when the source does not supply an update value. Reference data has no live freshness health badge because it is a caller-triggered batch import.
