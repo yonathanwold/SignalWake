@@ -1,0 +1,37 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import type { CanonicalEvent } from "../lib/types";
+import { AlertIcon, ChevronIcon, LinkIcon, QuakeIcon, RefreshIcon } from "./icons";
+import { ClassificationPill, SeverityDot } from "./status-pill";
+
+function timeLabel(value: string) {
+  const date = new Date(value);
+  return new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC", month: "short", day: "2-digit" }).format(date).replace(",", "");
+}
+function relativeLabel(value: string) {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  return `${Math.round(seconds / 3600)}h ago`;
+}
+function sourceLabel(event: CanonicalEvent) { return event.source_key === "nws" ? "NWS" : "USGS"; }
+
+export function EventFeed({ events, mode, selectedEvent, onSelect, onRefresh, refreshState = "ready" }: { events: CanonicalEvent[]; mode: "LIVE" | "DEMO"; selectedEvent: CanonicalEvent | null; onSelect: (event: CanonicalEvent) => void; onRefresh: () => void; refreshState?: "ready" | "loading"; }) {
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(() => events.filter((event) => (sourceFilter === "all" || event.source_key === sourceFilter) && (typeFilter === "all" || event.type === typeFilter) && (severityFilter === "all" || event.severity === severityFilter) && (!query || `${event.title} ${event.summary ?? ""}`.toLowerCase().includes(query.toLowerCase()))), [events, sourceFilter, typeFilter, severityFilter, query]);
+  return <section className="feed-section" aria-label="Event feed">
+    <div className="section-heading"><div><div className="section-eyebrow">CANONICAL EVENT STREAM</div><h1>Event Feed</h1><p>Latest observations, normalized to one source-aware event model.</p></div><div className="heading-actions"><span className={`stream-state stream-${mode.toLowerCase()}`}><span className="stream-dot" /> {mode}</span><button className="button button-quiet" type="button" onClick={onRefresh} disabled={refreshState === "loading"}><RefreshIcon size={14} /> {refreshState === "loading" ? "REFRESHING" : "REFRESH"}</button></div></div>
+    <div className="feed-toolbar"><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search event title or place" aria-label="Search events" /></label><label className="select-label"><span>SOURCE</span><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">ALL SOURCES</option><option value="nws">NWS</option><option value="usgs">USGS</option></select></label><label className="select-label"><span>TYPE</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="all">ALL TYPES</option><option value="weather_alert">WEATHER</option><option value="earthquake">EARTHQUAKE</option></select></label><label className="select-label"><span>SEVERITY</span><select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}><option value="all">ALL LEVELS</option><option value="warning">WARNING</option><option value="advisory">ADVISORY</option><option value="info">INFO</option></select></label><span className="result-count">{filtered.length.toString().padStart(2, "0")} RESULTS</span></div>
+    <div className="feed-layout"><div className="feed-list" role="list">{filtered.length === 0 ? <div className="empty-feed"><span>NO MATCHING OBSERVATIONS</span><p>Change the filters to inspect another part of the stream.</p></div> : filtered.map((event) => <button className={`feed-row ${selectedEvent?.id === event.id ? "feed-row-selected" : ""}`} key={event.id} onClick={() => onSelect(event)} type="button"><span className="feed-row-severity"><SeverityDot severity={event.severity} /></span><span className="feed-row-main"><span className="feed-row-title">{event.title}</span><span className="feed-row-sub"><span className={`source-mark source-${event.source_key}`}>{sourceLabel(event)}</span><span>{event.type === "earthquake" ? "SEISMIC" : "WEATHER"}</span><span>{relativeLabel(event.observed_at)}</span></span></span><span className="feed-row-time">{timeLabel(event.observed_at)}</span><ChevronIcon size={14} /></button>)}</div><EventInspector event={selectedEvent ?? filtered[0] ?? null} /></div>
+  </section>;
+}
+
+export function EventInspector({ event }: { event: CanonicalEvent | null }) {
+  if (!event) return <aside className="inspector inspector-empty"><div className="inspector-empty-mark">+</div><div>SELECT AN OBSERVATION</div><p>Choose an event to inspect its canonical fields and source provenance.</p></aside>;
+  const isQuake = event.type === "earthquake";
+  return <aside className="inspector"><div className="inspector-topline"><span>EVENT INSPECTOR</span><ClassificationPill value={event.classification} /></div><div className="inspector-event-kind"><span className={`inspector-icon inspector-icon-${event.source_key}`}>{isQuake ? <QuakeIcon size={16} /> : <AlertIcon size={16} />}</span><span>{isQuake ? "SEISMIC OBSERVATION" : "WEATHER ALERT"}</span><span className="inspector-active">{event.status.toUpperCase()}</span></div><h2>{event.title}</h2>{event.summary && <p className="inspector-summary">{event.summary}</p>}<div className="inspector-field-grid"><div><span>SEVERITY</span><strong className={`text-${event.severity}`}>{event.severity.toUpperCase()}</strong></div><div><span>OBSERVED UTC</span><strong>{timeLabel(event.observed_at)}</strong></div><div><span>COORDINATES</span><strong>{event.latitude !== null && event.longitude !== null ? `${event.latitude.toFixed(3)}°, ${event.longitude.toFixed(3)}°` : "POLYGON"}</strong></div><div><span>EVENT ID</span><strong className="mono">{event.source_event_id.slice(-16)}</strong></div></div><div className="inspector-divider" /><div className="provenance-heading"><LinkIcon size={14} /><span>SOURCE PROVENANCE</span></div><div className="provenance-source"><span className={`source-mark source-${event.source_key}`}>{sourceLabel(event)}</span><span>{event.source_name}</span><span className="provenance-record">{event.provenance[0]?.adapter_version ?? "—"} / ADAPTER</span></div><div className="provenance-row"><span>RAW RECORD</span><span className="mono">{event.provenance[0]?.raw_observation_id?.slice(-18) ?? "UNAVAILABLE"}</span></div><div className="provenance-row"><span>PAYLOAD HASH</span><span className="mono">{event.provenance[0]?.payload_hash?.slice(0, 14) ?? "UNAVAILABLE"}…</span></div><a className="source-link" href={event.provenance[0]?.source_url} target="_blank" rel="noreferrer"><LinkIcon size={13} /> OPEN AUTHORITATIVE SOURCE <ChevronIcon size={13} /></a></aside>;
+}
