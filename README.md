@@ -1,6 +1,6 @@
 # SIGNALWAKE
 
-SIGNALWAKE is an operational event intelligence foundation. It turns authoritative National Weather Service alerts and USGS earthquake observations into one canonical event model, then serves that model to a map-first web interface.
+SIGNALWAKE is a real-time geospatial event intelligence foundation. It turns authoritative National Weather Service alerts and USGS earthquake observations into one canonical event model, then serves that model to a map-first web interface. The long-term platform direction includes infrastructure dependencies, disruptions, simulations, and historical changes; this first slice does not claim those future capabilities.
 
 The first slice is intentionally honest about its boundary:
 
