@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { CanonicalEvent } from "../lib/types";
-import { AlertIcon, ChevronIcon, LinkIcon, QuakeIcon, RefreshIcon } from "./icons";
+import type { CanonicalEvent, InfrastructureAsset } from "../lib/types";
+import { AlertIcon, ChevronIcon, LinkIcon, MapIcon, QuakeIcon, RefreshIcon } from "./icons";
 import { ClassificationPill, SeverityDot } from "./status-pill";
 
 function timeLabel(value: string) {
@@ -34,4 +34,19 @@ export function EventInspector({ event }: { event: CanonicalEvent | null }) {
   if (!event) return <aside className="inspector inspector-empty"><div className="inspector-empty-mark">+</div><div>SELECT AN OBSERVATION</div><p>Choose an event to inspect its canonical fields and source provenance.</p></aside>;
   const isQuake = event.type === "earthquake";
   return <aside className="inspector"><div className="inspector-topline"><span>EVENT INSPECTOR</span><ClassificationPill value={event.classification} /></div><div className="inspector-event-kind"><span className={`inspector-icon inspector-icon-${event.source_key}`}>{isQuake ? <QuakeIcon size={16} /> : <AlertIcon size={16} />}</span><span>{isQuake ? "SEISMIC OBSERVATION" : "WEATHER ALERT"}</span><span className="inspector-active">{event.status.toUpperCase()}</span></div><h2>{event.title}</h2>{event.summary && <p className="inspector-summary">{event.summary}</p>}<div className="inspector-field-grid"><div><span>SEVERITY</span><strong className={`text-${event.severity}`}>{event.severity.toUpperCase()}</strong></div><div><span>OBSERVED UTC</span><strong>{timeLabel(event.observed_at)}</strong></div><div><span>COORDINATES</span><strong>{event.latitude !== null && event.longitude !== null ? `${event.latitude.toFixed(3)}°, ${event.longitude.toFixed(3)}°` : "POLYGON"}</strong></div><div><span>EVENT ID</span><strong className="mono">{event.source_event_id.slice(-16)}</strong></div></div><div className="inspector-divider" /><div className="provenance-heading"><LinkIcon size={14} /><span>SOURCE PROVENANCE</span></div><div className="provenance-source"><span className={`source-mark source-${event.source_key}`}>{sourceLabel(event)}</span><span>{event.source_name}</span><span className="provenance-record">{event.provenance[0]?.adapter_version ?? "—"} / ADAPTER</span></div><div className="provenance-row"><span>RAW RECORD</span><span className="mono">{event.provenance[0]?.raw_observation_id?.slice(-18) ?? "UNAVAILABLE"}</span></div><div className="provenance-row"><span>PAYLOAD HASH</span><span className="mono">{event.provenance[0]?.payload_hash?.slice(0, 14) ?? "UNAVAILABLE"}…</span></div><a className="source-link" href={event.provenance[0]?.source_url} target="_blank" rel="noreferrer"><LinkIcon size={13} /> OPEN AUTHORITATIVE SOURCE <ChevronIcon size={13} /></a></aside>;
+}
+
+function infrastructureTypeLabel(asset: InfrastructureAsset) {
+  return asset.type === "rail_corridor" ? "RAIL CORRIDOR" : asset.type.replaceAll("_", " ").toUpperCase();
+}
+
+function infrastructureLocation(asset: InfrastructureAsset) {
+  if (asset.latitude !== null && asset.longitude !== null) return `${asset.latitude.toFixed(3)}°, ${asset.longitude.toFixed(3)}°`;
+  return asset.geometry_type.toUpperCase();
+}
+
+export function InfrastructureInspector({ asset }: { asset: InfrastructureAsset | null }) {
+  if (!asset) return <aside className="inspector inspector-empty"><div className="inspector-empty-mark">+</div><div>SELECT REFERENCE DATA</div><p>Choose a port facility or rail corridor to inspect its source and geometry.</p></aside>;
+  const provenance = asset.provenance[0];
+  return <aside className="inspector infrastructure-inspector"><div className="inspector-topline"><span>INFRASTRUCTURE INSPECTOR</span><ClassificationPill value={asset.classification} /></div><div className="inspector-event-kind"><span className="inspector-icon inspector-icon-infrastructure"><MapIcon size={16} /></span><span>{infrastructureTypeLabel(asset)}</span><span className="inspector-active inspector-reference">REFERENCE</span></div><h2>{asset.name}</h2><p className="inspector-summary">Reference geometry from a public transportation dataset. It is not an inferred dependency or disruption score.</p><div className="inspector-field-grid"><div><span>SUBTYPE</span><strong>{asset.subtype ?? "—"}</strong></div><div><span>REGION</span><strong>{asset.region ?? "—"}</strong></div><div><span>LOCATION</span><strong>{infrastructureLocation(asset)}</strong></div><div><span>STATUS</span><strong>{asset.status?.toUpperCase() ?? "NOT SUPPLIED"}</strong></div></div><div className="inspector-divider" /><div className="provenance-heading"><LinkIcon size={14} /><span>SOURCE PROVENANCE</span></div><div className="provenance-source"><span className="source-mark source-infrastructure">{asset.source_key === "fra_rail" ? "FRA" : "BTS"}</span><span>{asset.source_name}</span><span className="provenance-record">{provenance?.adapter_version ?? "—"} / IMPORTER</span></div><div className="provenance-row"><span>SOURCE RECORD</span><span className="mono">{asset.source_asset_id}</span></div><div className="provenance-row"><span>IMPORTED UTC</span><span className="mono">{timeLabel(asset.imported_at)}</span></div><div className="provenance-row"><span>UPDATED UTC</span><span className="mono">{asset.source_updated_at ? timeLabel(asset.source_updated_at) : "NOT SUPPLIED"}</span></div><a className="source-link" href={asset.source_url} target="_blank" rel="noreferrer"><LinkIcon size={13} /> OPEN DATASET SOURCE <ChevronIcon size={13} /></a></aside>;
 }

@@ -1,4 +1,16 @@
-import type { CanonicalEvent, Source } from "./types";
+import type { CanonicalEvent, InfrastructureAsset, Source } from "./types";
+
+const portSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::port-facilities/about";
+const railSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::rail-lines/about";
+
+function demoInfrastructureProvenance(sourceRecordId: string, sourceUrl: string) {
+  return [{ source_record_id: sourceRecordId, source_url: sourceUrl, source_name: "U.S. DOT representative fixture", attribution: "Representative fixture only; not the full live dataset", license: "See authoritative source page", fetched_at: "2026-08-17T14:31:05Z", raw_record_id: `demo-raw-${sourceRecordId.toLowerCase()}`, adapter_version: "1.0.0", payload_hash: `demo-hash-${sourceRecordId.toLowerCase()}` }];
+}
+
+export const demoInfrastructure: InfrastructureAsset[] = [
+  { id: "demo-infra-port-001", source_id: "demo-source-bts-ports", source_key: "bts_ports", source_name: "BTS Port Facilities (representative fixture)", source_url: portSourceUrl, source_attribution: "U.S. Department of Transportation, Bureau of Transportation Statistics", source_license: "U.S. Government public data; confirm current dataset terms", source_asset_id: "PORT-VA-001", name: "Demo Hampton Roads Terminal", type: "port", subtype: "Marine terminal", operator: "Example Port Authority", owner: null, status: null, region: "VA", latitude: 36.95, longitude: -76.34, geometry_type: "Point", geometry: { type: "Point", coordinates: [-76.34, 36.95] }, metadata: { OBJECTID: "PORT-VA-001" }, classification: "REFERENCE", source_updated_at: "2026-08-16T12:00:00Z", imported_at: "2026-08-17T14:31:05Z", updated_at: "2026-08-17T14:31:05Z", provenance: demoInfrastructureProvenance("PORT-VA-001", portSourceUrl) },
+  { id: "demo-infra-rail-001", source_id: "demo-source-fra-rail", source_key: "fra_rail", source_name: "FRA Rail Lines (representative fixture)", source_url: railSourceUrl, source_attribution: "U.S. Department of Transportation, Federal Railroad Administration", source_license: "U.S. Government public data; confirm current dataset terms", source_asset_id: "RAIL-VA-001", name: "Demo Eastern Freight", type: "rail_corridor", subtype: "Tidewater", operator: null, owner: null, status: "Active", region: "VA", latitude: 37.15, longitude: -76.9, geometry_type: "LineString", geometry: { type: "LineString", coordinates: [[-77.1, 37.0], [-76.9, 37.15], [-76.65, 37.3]] }, metadata: { OBJECTID: "RAIL-VA-001" }, classification: "REFERENCE", source_updated_at: "2026-08-14T09:00:00Z", imported_at: "2026-08-17T14:31:05Z", updated_at: "2026-08-17T14:31:05Z", provenance: demoInfrastructureProvenance("RAIL-VA-001", railSourceUrl) },
+];
 
 export const demoEvents: CanonicalEvent[] = [
   {
@@ -71,19 +83,20 @@ export const demoSources: Source[] = [
   { id: "demo-source-usgs", key: "usgs", name: "United States Geological Survey", kind: "USGS", endpoint: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson", active: true, adapter_version: "1.0.0", last_success_at: "2026-08-17T14:31:05Z", last_attempt_at: "2026-08-17T14:31:05Z", last_error: null, last_http_status: 200, freshness_seconds: 0, health: "HEALTHY" },
 ];
 
-export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
+export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; infrastructure: InfrastructureAsset[]; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
   try {
-    const [eventsResponse, sourcesResponse] = await Promise.all([
+    const [eventsResponse, sourcesResponse, infrastructureResponse] = await Promise.all([
       fetch(`${base}/events?limit=100`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/sources`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
+      fetch(`${base}/infrastructure?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
     ]);
-    if (!eventsResponse.ok || !sourcesResponse.ok) throw new Error("API unavailable");
+    if (!eventsResponse.ok || !sourcesResponse.ok || !infrastructureResponse.ok) throw new Error("API unavailable");
     const eventBody = (await eventsResponse.json()) as { items: CanonicalEvent[] };
     const sourceBody = (await sourcesResponse.json()) as Source[];
-    return { events: eventBody.items, sources: sourceBody, mode: "LIVE", fetchedAt: new Date().toISOString() };
+    const infrastructureBody = (await infrastructureResponse.json()) as { items: InfrastructureAsset[] };
+    return { events: eventBody.items, sources: sourceBody, infrastructure: infrastructureBody.items, mode: "LIVE", fetchedAt: new Date().toISOString() };
   } catch {
-    return { events: demoEvents, sources: demoSources, mode: "DEMO", fetchedAt: new Date().toISOString() };
+    return { events: demoEvents, sources: demoSources, infrastructure: demoInfrastructure, mode: "DEMO", fetchedAt: new Date().toISOString() };
   }
 }
-

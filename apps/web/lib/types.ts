@@ -48,3 +48,42 @@ export type Source = {
   health: "HEALTHY" | "STALE" | "ERROR" | "UNKNOWN";
 };
 
+export type InfrastructureProvenance = {
+  source_record_id: string;
+  source_url: string;
+  source_name: string;
+  attribution: string;
+  license: string;
+  fetched_at: string;
+  raw_record_id: string | null;
+  adapter_version: string;
+  payload_hash: string;
+};
+
+export type InfrastructureAsset = {
+  id: string;
+  source_id: string;
+  source_key: string;
+  source_name: string;
+  source_url: string;
+  source_attribution: string;
+  source_license: string;
+  source_asset_id: string;
+  name: string;
+  type: "port" | "rail_corridor" | string;
+  subtype: string | null;
+  operator: string | null;
+  owner: string | null;
+  status: string | null;
+  region: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  geometry_type: "Point" | "LineString" | "Polygon";
+  geometry: { type: string; coordinates: unknown };
+  metadata: Record<string, unknown>;
+  classification: "REFERENCE";
+  source_updated_at: string | null;
+  imported_at: string;
+  updated_at: string;
+  provenance: InfrastructureProvenance[];
+};

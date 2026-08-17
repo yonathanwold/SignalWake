@@ -1,14 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { CanonicalEvent } from "../lib/types";
+import type { CanonicalEvent, InfrastructureAsset } from "../lib/types";
 import { AlertIcon, MapIcon, QuakeIcon } from "./icons";
 import { SeverityDot } from "./status-pill";
 
 type MapSurfaceProps = {
   events: CanonicalEvent[];
+  infrastructure: InfrastructureAsset[];
   selectedEvent: CanonicalEvent | null;
-  onSelect: (event: CanonicalEvent) => void;
+  selectedInfrastructure: InfrastructureAsset | null;
+  onSelectEvent: (event: CanonicalEvent) => void;
+  onSelectInfrastructure: (asset: InfrastructureAsset) => void;
 };
 
 const bounds = { minLon: -130, maxLon: -60, minLat: 20, maxLat: 56 };
@@ -28,6 +31,21 @@ function geometryCenter(event: CanonicalEvent) {
 function polygonPoints(event: CanonicalEvent) {
   if (event.geometry?.type !== "Polygon" || !Array.isArray(event.geometry.coordinates) || !Array.isArray(event.geometry.coordinates[0])) return "";
   return (event.geometry.coordinates[0] as number[][]).map(([longitude, latitude]) => { const p = project(longitude, latitude); return `${p.x},${p.y}`; }).join(" ");
+}
+
+function infrastructureCenter(asset: InfrastructureAsset) {
+  if (asset.longitude !== null && asset.latitude !== null) return { longitude: asset.longitude, latitude: asset.latitude };
+  const coordinates = asset.geometry?.coordinates;
+  if (asset.geometry?.type === "LineString" && Array.isArray(coordinates)) {
+    const points = (coordinates as number[][]).filter((point) => Array.isArray(point) && point.length >= 2);
+    if (points.length) return { longitude: points.reduce((sum, point) => sum + point[0], 0) / points.length, latitude: points.reduce((sum, point) => sum + point[1], 0) / points.length };
+  }
+  return null;
+}
+
+function infrastructureLinePoints(asset: InfrastructureAsset) {
+  if (asset.geometry?.type !== "LineString" || !Array.isArray(asset.geometry.coordinates)) return "";
+  return (asset.geometry.coordinates as number[][]).map(([longitude, latitude]) => { const point = project(longitude, latitude); return `${point.x},${point.y}`; }).join(" ");
 }
 
 type MapFeature = {
@@ -57,6 +75,18 @@ function eventCollection(events: CanonicalEvent[]): MapCollection {
   return { type: "FeatureCollection", features };
 }
 
+function infrastructureCollection(infrastructure: InfrastructureAsset[]): MapCollection {
+  return {
+    type: "FeatureCollection",
+    features: infrastructure.map((asset) => ({
+      type: "Feature",
+      id: asset.id,
+      properties: { infrastructureId: asset.id, assetType: asset.type, source: asset.source_key, title: asset.name },
+      geometry: { type: asset.geometry.type as "Point" | "Polygon" | "LineString", coordinates: asset.geometry.coordinates },
+    })),
+  };
+}
+
 function graticuleCollection(): MapCollection {
   const features: MapFeature[] = [];
   for (let longitude = -180; longitude <= 180; longitude += 10) {
@@ -82,7 +112,7 @@ function graticuleCollection(): MapCollection {
   return { type: "FeatureCollection", features };
 }
 
-function mapStyle(events: CanonicalEvent[]) {
+function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[]) {
   const land: MapCollection = {
     type: "FeatureCollection",
     features: [
@@ -93,30 +123,42 @@ function mapStyle(events: CanonicalEvent[]) {
   };
   return {
     version: 8,
-    sources: { land: { type: "geojson", data: land }, graticule: { type: "geojson", data: graticuleCollection() }, events: { type: "geojson", data: eventCollection(events) } },
+    sources: { land: { type: "geojson", data: land }, graticule: { type: "geojson", data: graticuleCollection() }, events: { type: "geojson", data: eventCollection(events) }, infrastructure: { type: "geojson", data: infrastructureCollection(infrastructure) } },
     layers: [
       { id: "background", type: "background", paint: { "background-color": "#09111b" } },
       { id: "land-fill", type: "fill", source: "land", paint: { "fill-color": "#101e2a", "fill-opacity": 0.96 } },
       { id: "land-outline", type: "line", source: "land", paint: { "line-color": "#344b5f", "line-width": 1.2, "line-opacity": 0.9 } },
       { id: "graticule", type: "line", source: "graticule", paint: { "line-color": "#294052", "line-width": 0.7, "line-opacity": 0.42, "line-dasharray": [2, 5] } },
-      { id: "event-polygons", type: "fill", source: "events", filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "#22c7a8"], "fill-opacity": 0.16 } },
-      { id: "event-polygon-outline", type: "line", source: "events", filter: ["==", ["geometry-type"], "Polygon"], paint: { "line-color": ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "#22c7a8"], "line-width": 1.8, "line-opacity": 0.9 } },
-      { id: "event-point-halo", type: "circle", source: "events", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 10, "circle-color": "transparent", "circle-stroke-color": ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "#22c7a8"], "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.48 } },
-      { id: "event-points", type: "circle", source: "events", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 5, "circle-color": ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "#22c7a8"], "circle-stroke-color": "#09111b", "circle-stroke-width": 1.5 } },
+      { id: "event-polygons", type: "fill", source: "events", filter: ["all", ["==", ["geometry-type"], "Polygon"], ["==", ["get", "source"], "nws"]], paint: { "fill-color": ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "#22c7a8"], "fill-opacity": 0.16 } },
+      { id: "event-polygon-outline", type: "line", source: "events", filter: ["all", ["==", ["geometry-type"], "Polygon"], ["==", ["get", "source"], "nws"]], paint: { "line-color": ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "#22c7a8"], "line-width": 1.8, "line-opacity": 0.9 } },
+      { id: "event-point-halo", type: "circle", source: "events", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"]], paint: { "circle-radius": 10, "circle-color": "transparent", "circle-stroke-color": ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "#22c7a8"], "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.48 } },
+      { id: "event-points", type: "circle", source: "events", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"]], paint: { "circle-radius": 5, "circle-color": ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "#22c7a8"], "circle-stroke-color": "#09111b", "circle-stroke-width": 1.5 } },
+      { id: "infrastructure-rail-lines", type: "line", source: "infrastructure", filter: ["==", ["get", "assetType"], "rail_corridor"], paint: { "line-color": "#6ab6ff", "line-width": 2.4, "line-opacity": 0.82, "line-dasharray": [1, 1.5] } },
+      { id: "infrastructure-port-points", type: "circle", source: "infrastructure", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "assetType"], "port"]], paint: { "circle-radius": 6, "circle-color": "#f1ad38", "circle-stroke-color": "#15100a", "circle-stroke-width": 1.5 } },
+      { id: "infrastructure-other-points", type: "circle", source: "infrastructure", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 5, "circle-color": "#a986f5", "circle-stroke-color": "#15101f", "circle-stroke-width": 1.5 } },
     ],
   };
 }
 
-export function MapSurface({ events, selectedEvent, onSelect }: MapSurfaceProps) {
+export function MapSurface({ events, infrastructure, selectedEvent, selectedInfrastructure, onSelectEvent, onSelectInfrastructure }: MapSurfaceProps) {
   const points = useMemo(() => events.map((event) => ({ event, center: geometryCenter(event) })).filter((item): item is { event: CanonicalEvent; center: { longitude: number; latitude: number } } => item.center !== null), [events]);
+  const infrastructurePoints = useMemo(() => infrastructure.map((asset) => ({ asset, center: infrastructureCenter(asset) })).filter((item): item is { asset: InfrastructureAsset; center: { longitude: number; latitude: number } } => item.center !== null), [infrastructure]);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
   const eventsRef = useRef(events);
-  const onSelectRef = useRef(onSelect);
+  const infrastructureRef = useRef(infrastructure);
+  const onSelectEventRef = useRef(onSelectEvent);
+  const onSelectInfrastructureRef = useRef(onSelectInfrastructure);
   const [mapRuntime, setMapRuntime] = useState<"loading" | "ready" | "fallback">("loading");
   const [keyboardIndex, setKeyboardIndex] = useState(0);
+  const [showNws, setShowNws] = useState(true);
+  const [showUsgs, setShowUsgs] = useState(true);
+  const [showPorts, setShowPorts] = useState(true);
+  const [showRail, setShowRail] = useState(true);
   eventsRef.current = events;
-  onSelectRef.current = onSelect;
+  infrastructureRef.current = infrastructure;
+  onSelectEventRef.current = onSelectEvent;
+  onSelectInfrastructureRef.current = onSelectInfrastructure;
 
   useEffect(() => {
     let disposed = false;
@@ -126,7 +168,7 @@ export function MapSurface({ events, selectedEvent, onSelect }: MapSurfaceProps)
         maplibre.setWorkerUrl("/maplibre-gl-worker.mjs");
         const map = new maplibre.Map({
           container: mapContainerRef.current,
-          style: mapStyle(eventsRef.current) as never,
+          style: mapStyle(eventsRef.current, infrastructureRef.current) as never,
           center: [-96, 38],
           zoom: 3.25,
           minZoom: 2,
@@ -138,7 +180,13 @@ export function MapSurface({ events, selectedEvent, onSelect }: MapSurfaceProps)
         const selectFromFeature = (feature: { properties?: Record<string, unknown> } | undefined) => {
           const eventId = feature?.properties?.eventId;
           const event = typeof eventId === "string" ? eventsRef.current.find((item) => item.id === eventId) : undefined;
-          if (event) onSelectRef.current(event);
+          if (event) {
+            onSelectEventRef.current(event);
+            return;
+          }
+          const infrastructureId = feature?.properties?.infrastructureId;
+          const asset = typeof infrastructureId === "string" ? infrastructureRef.current.find((item) => item.id === infrastructureId) : undefined;
+          if (asset) onSelectInfrastructureRef.current(asset);
         };
         map.on("load", () => {
           if (disposed) return;
@@ -150,10 +198,17 @@ export function MapSurface({ events, selectedEvent, onSelect }: MapSurfaceProps)
         map.on("click", "event-points", (event) => selectFromFeature(event.features?.[0]));
         map.on("click", "event-polygons", (event) => selectFromFeature(event.features?.[0]));
         map.on("click", "event-polygon-outline", (event) => selectFromFeature(event.features?.[0]));
+        map.on("click", "infrastructure-port-points", (event) => selectFromFeature(event.features?.[0]));
+        map.on("click", "infrastructure-rail-lines", (event) => selectFromFeature(event.features?.[0]));
+        map.on("click", "infrastructure-other-points", (event) => selectFromFeature(event.features?.[0]));
         map.on("mouseenter", "event-points", () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseenter", "event-polygons", () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseleave", "event-points", () => { map.getCanvas().style.cursor = ""; });
         map.on("mouseleave", "event-polygons", () => { map.getCanvas().style.cursor = ""; });
+        map.on("mouseenter", "infrastructure-port-points", () => { map.getCanvas().style.cursor = "pointer"; });
+        map.on("mouseenter", "infrastructure-rail-lines", () => { map.getCanvas().style.cursor = "pointer"; });
+        map.on("mouseleave", "infrastructure-port-points", () => { map.getCanvas().style.cursor = ""; });
+        map.on("mouseleave", "infrastructure-rail-lines", () => { map.getCanvas().style.cursor = ""; });
       } catch {
         if (!disposed) setMapRuntime("fallback");
       }
@@ -172,17 +227,39 @@ export function MapSurface({ events, selectedEvent, onSelect }: MapSurfaceProps)
     source?.setData(eventCollection(events) as never);
   }, [events]);
 
+  useEffect(() => {
+    const source = mapRef.current?.getSource("infrastructure") as import("maplibre-gl").GeoJSONSource | undefined;
+    source?.setData(infrastructureCollection(infrastructure) as never);
+  }, [infrastructure]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || mapRuntime !== "ready") return;
+    const visibility = (visible: boolean) => visible ? "visible" : "none";
+    ["event-polygons", "event-polygon-outline"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showNws)));
+    ["event-points", "event-point-halo"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showUsgs)));
+    map.setLayoutProperty("infrastructure-port-points", "visibility", visibility(showPorts));
+    map.setLayoutProperty("infrastructure-rail-lines", "visibility", visibility(showRail));
+  }, [mapRuntime, showNws, showUsgs, showPorts, showRail]);
+
   const handleMapKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
-    const selectable = events.filter((item) => geometryCenter(item) !== null);
+    const selectable = [
+      ...events.filter((item) => geometryCenter(item) !== null).map((item) => ({ kind: "event" as const, item })),
+      ...infrastructure.filter((item) => infrastructureCenter(item) !== null).map((item) => ({ kind: "infrastructure" as const, item })),
+    ];
     if (!selectable.length) return;
     if (event.key !== "ArrowRight" && event.key !== "ArrowDown" && event.key !== "ArrowLeft" && event.key !== "ArrowUp" && event.key !== "Enter") return;
     event.preventDefault();
     const nextIndex = event.key === "ArrowRight" || event.key === "ArrowDown" ? (keyboardIndex + 1) % selectable.length : event.key === "ArrowLeft" || event.key === "ArrowUp" ? (keyboardIndex - 1 + selectable.length) % selectable.length : keyboardIndex;
     setKeyboardIndex(nextIndex);
-    if (event.key === "Enter" || event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowUp") onSelect(selectable[nextIndex]);
-  }, [events, keyboardIndex, onSelect]);
+    if (event.key === "Enter" || event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      const selected = selectable[nextIndex];
+      if (selected.kind === "event") onSelectEvent(selected.item);
+      else onSelectInfrastructure(selected.item);
+    }
+  }, [events, infrastructure, keyboardIndex, onSelectEvent, onSelectInfrastructure]);
 
-  return <section className="map-section" aria-label="Operational event map">
+  return <section className="map-section" aria-label="Operational event and infrastructure map">
     <div className="map-toolbar"><div className="map-title"><MapIcon size={16} /><span>NORTH AMERICA / LIVE SITUATIONAL VIEW</span></div><div className="map-toolbar-right"><span className="map-coordinate">W 130° — W 60°</span><span className="map-zoom">+ <span>1.0×</span> −</span></div></div>
     <div className="map-canvas">
       <div ref={mapContainerRef} className={`maplibre-canvas ${mapRuntime === "ready" ? "maplibre-canvas-ready" : "maplibre-canvas-hidden"}`} role="application" aria-label="MapLibre operational event map. Focus this map and use arrow keys to select events." tabIndex={0} onKeyDown={handleMapKeyDown} />
@@ -194,15 +271,17 @@ export function MapSurface({ events, selectedEvent, onSelect }: MapSurfaceProps)
         <path d="M477 355 499 375 514 410 544 422 565 455 594 466 610 500 629 525 613 555 580 547 561 519 524 503 499 480 471 466 448 438 426 405Z" fill="#101e2a" stroke="#33495d" strokeWidth="1.2" opacity="0.95" />
         <path d="M0 420h1000M0 300h1000M0 180h1000M140 0v600M350 0v600M560 0v600M770 0v600" stroke="#294052" strokeWidth="0.7" strokeDasharray="3 8" opacity="0.45" />
         <text x="85" y="184" className="map-label">PACIFIC NORTHWEST</text><text x="450" y="150" className="map-label">GREAT LAKES</text><text x="695" y="283" className="map-label">NORTHEAST</text><text x="418" y="527" className="map-label">GULF OF MEXICO</text>
-        {events.filter((event) => event.geometry?.type === "Polygon").map((event) => <polygon key={`poly-${event.id}`} points={polygonPoints(event)} className={`event-polygon severity-fill-${event.severity} ${selectedEvent?.id === event.id ? "event-polygon-selected" : ""}`} onClick={() => onSelect(event)} />)}
-        {points.map(({ event, center }) => { const point = project(center.longitude, center.latitude); const selected = selectedEvent?.id === event.id; return <g key={event.id} className={`event-marker marker-${event.severity} ${selected ? "event-marker-selected" : ""}`} transform={`translate(${point.x} ${point.y})`} onClick={() => onSelect(event)} role="button" aria-label={`Select ${event.title}`} tabIndex={0} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") onSelect(event); }}><circle r={selected ? 14 : 10} className="marker-halo" /><circle r={selected ? 6 : 4.5} className="marker-core" /><circle r="2" className="marker-glint" /></g>; })}
+        {events.filter((event) => event.geometry?.type === "Polygon" && (event.source_key === "nws" ? showNws : showUsgs)).map((event) => <polygon key={`poly-${event.id}`} points={polygonPoints(event)} className={`event-polygon severity-fill-${event.severity} ${selectedEvent?.id === event.id ? "event-polygon-selected" : ""}`} onClick={() => onSelectEvent(event)} />)}
+        {points.filter(({ event }) => event.source_key === "nws" ? showNws : showUsgs).map(({ event, center }) => { const point = project(center.longitude, center.latitude); const selected = selectedEvent?.id === event.id; return <g key={event.id} className={`event-marker marker-${event.severity} ${selected ? "event-marker-selected" : ""}`} transform={`translate(${point.x} ${point.y})`} onClick={() => onSelectEvent(event)} role="button" aria-label={`Select ${event.title}`} tabIndex={0} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") onSelectEvent(event); }}><circle r={selected ? 14 : 10} className="marker-halo" /><circle r={selected ? 6 : 4.5} className="marker-core" /><circle r="2" className="marker-glint" /></g>; })}
+        {infrastructure.filter((asset) => asset.type === "rail_corridor" ? showRail : showPorts).filter((asset) => asset.geometry.type === "LineString").map((asset) => <polyline key={`infra-line-${asset.id}`} points={infrastructureLinePoints(asset)} className={`infrastructure-rail ${selectedInfrastructure?.id === asset.id ? "infrastructure-selected" : ""}`} onClick={() => onSelectInfrastructure(asset)} role="button" aria-label={`Select ${asset.name}`} />)}
+        {infrastructurePoints.filter(({ asset }) => asset.geometry.type !== "LineString" && (asset.type === "port" ? showPorts : showRail)).map(({ asset, center }) => { const point = project(center.longitude, center.latitude); const selected = selectedInfrastructure?.id === asset.id; return <g key={`infra-point-${asset.id}`} className={`infrastructure-marker infrastructure-${asset.type} ${selected ? "infrastructure-selected" : ""}`} transform={`translate(${point.x} ${point.y})`} onClick={() => onSelectInfrastructure(asset)} role="button" aria-label={`Select ${asset.name}`} tabIndex={0} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") onSelectInfrastructure(asset); }}><circle r={selected ? 9 : 6} className="infrastructure-marker-core" /></g>; })}
       </svg>
       {mapRuntime === "ready" && <div className="maplibre-zoom-controls" aria-label="Map controls"><button type="button" onClick={() => mapRef.current?.zoomIn()} aria-label="Zoom in">+</button><button type="button" onClick={() => mapRef.current?.zoomOut()} aria-label="Zoom out">−</button><button type="button" onClick={() => mapRef.current?.flyTo({ center: [-96, 38], zoom: 3.25 })} aria-label="Reset map view">⌾</button></div>}
       <div className="map-fallback-note"><span className={`fallback-dot fallback-dot-${mapRuntime}`} /><span>{mapRuntime === "ready" ? "MAP RUNTIME / MAPLIBRE GL JS" : mapRuntime === "fallback" ? "MAP RUNTIME / SVG FALLBACK" : "MAP RUNTIME / INITIALIZING"}</span><span className="fallback-detail">{mapRuntime === "ready" ? "Self-contained vector style · no token required" : mapRuntime === "fallback" ? "MapLibre initialization unavailable" : "Loading self-contained vector style"}</span></div>
-      <div className="map-layer-rail"><div className="rail-label">LAYERS</div><button className="layer-control layer-active" type="button"><span className="layer-swatch layer-swatch-alert" /><span>NWS ALERTS</span><strong>{events.filter((event) => event.source_key === "nws").length.toString().padStart(2, "0")}</strong></button><button className="layer-control layer-active" type="button"><span className="layer-swatch layer-swatch-quake" /><span>USGS QUAKES</span><strong>{events.filter((event) => event.source_key === "usgs").length.toString().padStart(2, "0")}</strong></button><button className="layer-control" type="button" disabled><span className="layer-swatch layer-swatch-future" /><span>POWER GRID</span><strong>—</strong></button><button className="layer-control" type="button" disabled><span className="layer-swatch layer-swatch-future" /><span>TRANSPORT</span><strong>—</strong></button></div>
+      <div className="map-layer-rail"><div className="rail-label">LIVE EVENT DATA</div><button className={`layer-control ${showNws ? "layer-active" : ""}`} type="button" onClick={() => setShowNws((value) => !value)} aria-pressed={showNws}><span className="layer-swatch layer-swatch-alert" /><span>NWS ALERTS</span><strong>{events.filter((event) => event.source_key === "nws").length.toString().padStart(2, "0")}</strong></button><button className={`layer-control ${showUsgs ? "layer-active" : ""}`} type="button" onClick={() => setShowUsgs((value) => !value)} aria-pressed={showUsgs}><span className="layer-swatch layer-swatch-quake" /><span>USGS QUAKES</span><strong>{events.filter((event) => event.source_key === "usgs").length.toString().padStart(2, "0")}</strong></button><div className="rail-label rail-label-reference">INFRASTRUCTURE REFERENCE DATA</div><button className={`layer-control ${showPorts ? "layer-active" : ""}`} type="button" onClick={() => setShowPorts((value) => !value)} aria-pressed={showPorts}><span className="layer-swatch layer-swatch-port" /><span>PORT FACILITIES</span><strong>{infrastructure.filter((asset) => asset.type === "port").length.toString().padStart(2, "0")}</strong></button><button className={`layer-control ${showRail ? "layer-active" : ""}`} type="button" onClick={() => setShowRail((value) => !value)} aria-pressed={showRail}><span className="layer-swatch layer-swatch-rail" /><span>RAIL CORRIDORS</span><strong>{infrastructure.filter((asset) => asset.type === "rail_corridor").length.toString().padStart(2, "0")}</strong></button><button className="layer-control" type="button" disabled><span className="layer-swatch layer-swatch-future" /><span>POWER GRID / FUTURE</span><strong>—</strong></button></div>
       <div className="map-legend"><span><span className="legend-dot legend-warning" /> WARNING</span><span><span className="legend-dot legend-advisory" /> ADVISORY</span><span><span className="legend-dot legend-info" /> INFO</span></div>
       <div className="map-scale"><span>0</span><span className="scale-line" /><span>500 km</span></div>
     </div>
-    <div className="map-foot"><span><span className="foot-icon"><AlertIcon size={14} /></span> WEATHER OVERLAYS</span><span><span className="foot-icon"><QuakeIcon size={14} /></span> SEISMIC OBSERVATIONS</span><span className="map-foot-note"><SeverityDot severity="info" /> Geometry is source-provided · positions are not impact assessments</span></div>
+    <div className="map-foot"><span><span className="foot-icon"><AlertIcon size={14} /></span> WEATHER OVERLAYS</span><span><span className="foot-icon"><QuakeIcon size={14} /></span> SEISMIC OBSERVATIONS</span><span className="map-foot-note"><SeverityDot severity="info" /> Reference assets are source-provided · no impact assessment is implied</span></div>
   </section>;
 }
