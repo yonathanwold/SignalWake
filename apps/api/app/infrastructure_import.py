@@ -304,6 +304,7 @@ async def import_payload(
                 "longitude": normalized["longitude"],
                 "geometry_type": normalized["geometry_type"],
                 "geometry_geojson": geometry_json,
+                "geometry": geometry_json,
                 "metadata_json": json.dumps(normalized["metadata"], sort_keys=True),
                 "provenance_json": provenance_json,
                 "payload_hash": digest,

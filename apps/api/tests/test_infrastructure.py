@@ -5,10 +5,16 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
+from sqlalchemy.dialects import postgresql
 
 from app.infrastructure_import import import_payload
 from app.main import app
-from app.models import InfrastructureAsset, InfrastructureSource, RawInfrastructureRecord
+from app.models import (
+    InfrastructureAsset,
+    InfrastructureSource,
+    PostGISGeometry,
+    RawInfrastructureRecord,
+)
 from app.spatial import (
     GeometryValidationError,
     distance_geometry_to_point_km,
@@ -76,6 +82,11 @@ def test_spatial_validation_intersection_and_distance():
     assert distance_geometry_to_point_km(point, -76.34, 36.95) == pytest.approx(0)
     with pytest.raises(GeometryValidationError):
         validate_geometry({"type": "Polygon", "coordinates": [[[0, 0], [1, 1], [0, 1]]]})
+
+
+def test_postgis_geometry_bind_uses_wgs84_wkt():
+    geometry = json.dumps({"type": "Point", "coordinates": [-76.34, 36.95]})
+    assert PostGISGeometry().process_bind_param(geometry, postgresql.dialect()) == "POINT (-76.34 36.95)"
 
 
 @pytest.mark.asyncio

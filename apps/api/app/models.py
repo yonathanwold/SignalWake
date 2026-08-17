@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import json
 import uuid
 from datetime import datetime
 
@@ -16,8 +17,8 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import JSON, TypeDecorator, UserDefinedType
 from sqlalchemy.types import Text as SQLText
-from sqlalchemy.types import TypeDecorator, UserDefinedType
 
 
 class Base(DeclarativeBase):
@@ -43,6 +44,46 @@ class PostGISGeometry(TypeDecorator):
         if dialect.name == "postgresql":
             return dialect.type_descriptor(_PostGISGeometryImpl())
         return dialect.type_descriptor(SQLText())
+
+    def process_bind_param(self, value, dialect):
+        if value is None or dialect.name != "postgresql":
+            return value
+        geometry = json.loads(value) if isinstance(value, str) else value
+        geometry_type = geometry.get("type")
+        coordinates = geometry.get("coordinates")
+        if geometry_type == "Point":
+            return f"POINT ({coordinates[0]} {coordinates[1]})"
+        if geometry_type == "LineString":
+            points = ", ".join(f"{point[0]} {point[1]}" for point in coordinates)
+            return f"LINESTRING ({points})"
+        if geometry_type == "Polygon":
+            rings = ", ".join(
+                f"({', '.join(f'{point[0]} {point[1]}' for point in ring)})" for ring in coordinates
+            )
+            return f"POLYGON ({rings})"
+        raise ValueError(f"unsupported geometry type: {geometry_type}")
+
+
+class JSONText(TypeDecorator):
+    """JSON text on SQLite and native JSONB on PostgreSQL."""
+
+    impl = SQLText
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        return dialect.type_descriptor(JSON() if dialect.name == "postgresql" else SQLText())
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return json.loads(value) if isinstance(value, str) else value
+        return value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+
+    def process_result_value(self, value, dialect):
+        if value is None or isinstance(value, str):
+            return value
+        return json.dumps(value, sort_keys=True)
 
 
 class SourceKind(str, enum.Enum):
@@ -162,12 +203,12 @@ class InfrastructureAsset(Base):
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     geometry_type: Mapped[str] = mapped_column(String(32))
-    geometry_geojson: Mapped[str] = mapped_column(Text)
+    geometry_geojson: Mapped[str] = mapped_column(JSONText())
     # The migration uses PostGIS geometry(Geometry, 4326). SQLite stores no value here;
     # geometry_geojson remains the deterministic test/dev representation.
     geometry: Mapped[str | None] = mapped_column(PostGISGeometry(), nullable=True)
-    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
-    provenance_json: Mapped[str] = mapped_column(Text, default="[]")
+    metadata_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    provenance_json: Mapped[str] = mapped_column(JSONText(), default="[]")
     payload_hash: Mapped[str] = mapped_column(String(64), index=True)
     classification: Mapped[str] = mapped_column(String(16), default=InfrastructureClassification.REFERENCE.value)
     source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
