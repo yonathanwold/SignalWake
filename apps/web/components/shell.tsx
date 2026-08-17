@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { FlaskIcon, HeartbeatIcon, HistoryIcon, LinkIcon, ListIcon, MapIcon, NetworkIcon, SignalMark } from "./icons";
 
 const navItems = [
@@ -16,12 +17,19 @@ const navItems = [
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [utcClock, setUtcClock] = useState("--:--");
+  useEffect(() => {
+    const updateClock = () => setUtcClock(new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(new Date()));
+    updateClock();
+    const interval = window.setInterval(updateClock, 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
   return <div className="app-shell">
     <header className="topbar">
       <Link className="brand" href="/" aria-label="SIGNALWAKE home"><SignalMark size={21} /><span>SIGNAL<span className="brand-accent">WAKE</span></span></Link>
       <div className="topbar-divider" />
       <div className="topbar-context"><span className="context-kicker">OPERATIONS CONSOLE</span><span className="context-slash">/</span><span>{pathname === "/" ? "Operational Map" : navItems.find((item) => item.href === pathname)?.label ?? "Signal surface"}</span></div>
-      <div className="topbar-actions"><span className="connection"><span className="connection-dot" /> API CONNECTED</span><span className="clock">UTC {new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(new Date())}</span></div>
+      <div className="topbar-actions"><span className="connection"><span className="connection-dot" /> API CONNECTED</span><span className="clock">UTC {utcClock}</span></div>
     </header>
     <div className="body-shell">
       <aside className="side-nav" aria-label="Primary navigation">
@@ -33,4 +41,3 @@ export function Shell({ children }: { children: React.ReactNode }) {
     </div>
   </div>;
 }
-
