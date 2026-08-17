@@ -249,3 +249,19 @@ def distance_geometry_to_point_km(geometry: dict[str, Any], longitude: float, la
             ratio = max(0.0, min(1.0, ratio))
             candidates.append((start[0] + ratio * (end[0] - start[0]), start[1] + ratio * (end[1] - start[1])))
     return min(_haversine_km(point, target) for point in candidates)
+
+
+def distance_points_km(first: tuple[float, float], second: tuple[float, float]) -> float:
+    """Great-circle distance for two WGS84 longitude/latitude points."""
+
+    return _haversine_km(_coordinate(first), _coordinate(second))
+
+
+def geometry_endpoints(geometry: dict[str, Any]) -> list[tuple[float, float]]:
+    """Return endpoints for a LineString; empty for point/polygon shapes."""
+
+    normalized = validate_geometry(geometry)
+    if normalized["type"] != "LineString":
+        return []
+    coordinates = normalized["coordinates"]
+    return [tuple(coordinates[0]), tuple(coordinates[-1])]
