@@ -39,6 +39,40 @@ FastAPI /infrastructure, /infrastructure/{id}
 Operational Map reference layers + infrastructure inspector
 ```
 
+Phase 3 adds a separate, persisted graph layer. It is intentionally built
+from the two canonical Phase 2 asset types only:
+
+```text
+InfrastructureAsset + source/provenance
+    | explicit python -m app.derivation or POST /graph/rebuild
+    v
+InfrastructureRelationship (source-aware, idempotent edge)
+    | bounded adjacency + deterministic traversals
+    v
+/graph/nodes, /graph/nodes/{id}/neighbors, /graph/paths,
+/graph/subgraph, /graph/metrics
+    v
+Infrastructure Graph scoped workspace
+```
+
+Current node types are `port` (BTS Port Facilities) and `rail_corridor` (FRA
+Rail Lines). Current relationship types are:
+
+- `CONNECTED_TO`: two rail LineString endpoints are within the default 100 m
+  endpoint tolerance. This is endpoint topology, not generic proximity.
+- `INTERSECTS`: supported geometries have an actual segment/point intersection
+  and the pair is not represented by endpoint connectivity.
+- `ADJACENT_TO`: a port Point is within the default 25 km measured distance of
+  a rail corridor. When both assets provide a region, the normalized regions
+  must match. Evidence records the measured distance and threshold.
+
+All generated edges are `DERIVED`, use undirected semantics, and retain both
+asset IDs, source-scoped record IDs, source URLs, geometry predicate, rule,
+version, and applicable tolerance/distance in JSON evidence. The schema also
+supports `SOURCE_OBSERVED` edges and source relationship IDs; the derived
+rebuild never deletes or updates those rows. Unsupported `DEPENDS_ON`,
+`SUPPLIES`, `ALTERNATIVE_TO`, and `LOCATED_IN` semantics are not generated.
+
 Each adapter implements the same `SourceAdapter` protocol. Fetching is separate from normalization, and raw payloads are preserved before canonical events are written. Payload hashes and source-scoped record IDs make retries idempotent. A normalization version is stored with every event so later schema changes can be replayed safely.
 
 ## Persistence
@@ -49,6 +83,11 @@ The Phase 2 model uses `InfrastructureSource`, `RawInfrastructureRecord`, and `I
 
 The migration also adds source/type/region indexes and unique `(source_id, source_asset_id)` identity. Raw payloads are unique by `(source_id, payload_hash)`, while changed payloads for the same source record update one canonical asset and preserve the latest raw record link.
 
+`003_infrastructure_relationships.sql` stores the stable relationship key,
+endpoint foreign keys, relationship/source/directionality fields, derivation
+method/version, optional confidence, evidence JSON, distance/tolerance, and
+timestamps. Endpoint/type/source indexes support bounded adjacency lookups.
+
 ## API contract
 
 - `GET /health` — service, database, and source freshness status.
@@ -57,6 +96,13 @@ The migration also adds source/type/region indexes and unique `(source_id, sourc
 - `GET /events/{id}` — event detail including provenance and raw observation reference.
 - `GET /infrastructure` — bounded reference assets with `bbox`, `type`, `source`, `region`, `limit`, `cursor`, and `page` filters.
 - `GET /infrastructure/{id}` — one reference asset with geometry, source attribution/license, timestamps, and provenance.
+- `GET /graph/nodes` — bounded/paginated graph nodes with type, region, source, and structural metric filters.
+- `GET /graph/nodes/{id}` — one asset plus graph metrics.
+- `GET /graph/nodes/{id}/neighbors` — bounded depth traversal; current edges are undirected, so `direction=in/out` is rejected.
+- `GET /graph/paths` — shortest path within a caller-supplied hop bound; missing nodes and no-path cases are 404.
+- `GET /graph/subgraph` — bounded root/depth/type/region/relationship subgraph.
+- `GET /graph/metrics` — structural metrics for one node or a bounded filtered set.
+- `POST /graph/rebuild` — explicit bounded derivation with configurable endpoint tolerance and port-to-rail distance.
 
 The browser's map markers and feed rows are both projections of the same `Event` response. Infrastructure layers and the reference inspector are projections of `/infrastructure`; the browser does not ship a full static dataset. MapLibre uses separate GeoJSON sources for events and infrastructure. The SVG renderer remains a fallback.
 
@@ -65,3 +111,21 @@ The browser's map markers and feed rows are both projections of the same `Event`
 PostgreSQL uses `ST_Intersects(geometry, ST_MakeEnvelope(..., 4326))` for viewport filtering and `ST_DWithin(geometry::geography, ..., metres)` for distance queries. Reusable service functions also expose geometry intersection and distance operations for internal workflows. SQLite has no spatial extension in the deterministic test path, so it validates Point/LineString/Polygon GeoJSON and filters a bounded in-memory candidate set with conservative pure-Python primitives. It is not a production-scale spatial substitute. API limits are capped at 500 assets per request; callers should use `cursor`/`page` for larger imports.
 
 Infrastructure assets are reference facts only. SIGNALWAKE does not infer graph edges, disruption likelihood, consequence, or scenario results in Phase 2.
+
+## Graph engine limits and metrics
+
+The in-memory engine is built per bounded request from persisted relationships.
+Adjacency is sorted by stable IDs and relationship type so neighbors, paths,
+components, and subgraphs are reproducible. The derivation service uses a
+deterministic longitude/latitude candidate grid rather than an unbounded
+all-pairs proximity scan; PostgreSQL deployments can use the same geometry
+predicates with the indexed PostGIS columns.
+
+Metrics are structural only: `degree`, connected `component_size`, normalized
+unweighted Brandes `betweenness_centrality` (0–1), Tarjan
+`is_articulation_point`, and `alternate_path_count` (direct neighbors still
+reachable after their direct edge is removed). These numbers describe the
+bounded persisted relationship graph; they are not reliability, importance,
+impact, upstream/downstream, or disruption scores. API limits cap any response
+at 200 nodes and subgraphs default to depth 2 / 50 nodes; the browser uses a
+depth-2 / 30-node scope.

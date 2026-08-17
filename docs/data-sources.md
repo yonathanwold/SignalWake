@@ -47,3 +47,24 @@ The source URLs above are authoritative landing pages. The importer accepts a do
 ## Infrastructure import provenance
 
 Every asset retains its source key and stable source record ID, source URL/name, attribution, license note, fetch time, adapter version, payload hash, and raw record ID. Changed source payloads update the canonical asset by `(source_id, source_asset_id)`; repeated payloads do not create duplicate raw or asset rows. `source_updated_at` is null when the source does not supply an update value. Reference data has no live freshness health badge because it is a caller-triggered batch import.
+
+## Graph relationships and provenance
+
+The graph uses only the imported BTS port points and FRA rail LineStrings. It
+does not treat proximity as a generic dependency signal. An explicit rebuild
+(`python -m app.derivation`, or `POST /graph/rebuild`) applies these rules:
+
+| Edge | Deterministic rule | Evidence |
+| --- | --- | --- |
+| `CONNECTED_TO` | Rail LineString endpoints within 100 m (default) | endpoint predicate, tolerance, measured distance, both asset/source records |
+| `INTERSECTS` | Actual supported geometry intersection not represented by endpoint connectivity | intersection predicate and endpoint check |
+| `ADJACENT_TO` | Port Point to rail corridor within 25 km (default); both supplied regions must match | distance predicate, measured distance, threshold, region check |
+
+Distances use WGS84 great-circle/segment calculations in SQLite and PostGIS
+geography predicates in production. Every generated edge is labeled
+`DERIVED`, includes the derivation method/version and source URLs/record IDs in
+evidence, and uses undirected semantics. The relationship table can retain
+future `SOURCE_OBSERVED` rows with source relationship IDs; derived rebuilds
+never overwrite or delete those rows. No `DEPENDS_ON`, `SUPPLIES`,
+`ALTERNATIVE_TO`, or `LOCATED_IN` edge is currently supported, and graph edges
+are not event impact assessments.

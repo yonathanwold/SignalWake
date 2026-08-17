@@ -15,6 +15,14 @@ Every visible event is marked `LIVE` or `DEMO`, and normalized source fields are
 
 Infrastructure assets are always classified `REFERENCE`. A source record can carry an operator, owner, status, or source-updated value only when the source supplies it; the normalizer does not fill missing domain facts. The browser keeps the event stream and reference layers visually and semantically separate.
 
+Graph relationships are a separate persisted layer. Current nodes are only
+`port` and `rail_corridor`; current edges are `CONNECTED_TO`, `INTERSECTS`, and
+`ADJACENT_TO`. `SOURCE_OBSERVED` is reserved for a future source relationship
+adapter; the Phase 3 builder writes `DERIVED` edges with an explicit rule,
+version, threshold/tolerance, measured distance where applicable, asset/source
+record IDs, and source URLs. No dependency, supply, alternative, location,
+impact, or scenario semantics are inferred.
+
 ## Adapter behavior
 
 Adapters send a descriptive user-agent, enforce a timeout, retry transient 429/5xx responses with bounded exponential backoff, and return structured errors for malformed JSON or missing fields. `ingest_once` runs one bounded pass over every adapter, records source attempt/success/error metadata, preserves each valid raw payload, and writes canonical `LIVE` events idempotently. Malformed features are logged and skipped without blocking the other source. Tests use checked-in JSON fixtures and monkeypatch the fetch boundary, so CI never calls NWS or USGS.
@@ -41,6 +49,18 @@ python -m app.infrastructure_import --source fra_rail --file app/fixtures/infras
 
 Live imports require a public GeoJSON export URL or a downloaded file from the source pages. No credentials are required or accepted by the importer. Do not describe fixtures as full coverage.
 
+After imports, graph derivation is explicit and repeatable:
+
+```powershell
+python -m app.derivation
+```
+
+Defaults are 100 m for rail endpoint connectivity and 25 km for port-to-rail
+adjacency. The service uses a deterministic spatial candidate grid, removes
+stale `DERIVED` edges on rebuild, and never modifies `SOURCE_OBSERVED` rows.
+The API also exposes the explicit `POST /graph/rebuild` operation with bounded
+settings. GET requests never silently rebuild graph state.
+
 ## Verification commands
 
 ```powershell
@@ -53,3 +73,10 @@ npm.cmd run lint
 npm.cmd run typecheck
 npm.cmd run build
 ```
+
+Graph tests cover exact small-graph traversals, components, shortest paths,
+degree, articulation points, betweenness, bounded subgraphs, derivation
+predicates, duplicate/upsert behavior, stale/unsupported negatives, API
+filters/bounds, and provenance. SQLite is the deterministic test path; Docker
+PostGIS runtime validation is not available in this environment, so migration
+tests assert the SRID, GiST, FK, uniqueness, and predicate DDL instead.

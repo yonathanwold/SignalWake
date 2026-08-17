@@ -8,7 +8,7 @@ The first slice is intentionally honest about its boundary:
 - `DEMO` means deterministic fixture data used only when startup ingestion is disabled, a source has no usable live events, or the browser cannot reach the API.
 - `DERIVED` means normalized event fields such as severity and type; it does not mean an infrastructure impact prediction.
 - `REFERENCE` means an imported infrastructure asset whose geometry and metadata came from a named public source. It is intentionally separate from live event observations.
-- Infrastructure Graph, Scenario Lab, Historical Replay, Source Provenance, and System Health are routed shells for later milestones. They do not invent analytics.
+- Infrastructure Graph is a bounded, API-backed workspace over persisted Phase 3 relationships. Scenario Lab, Historical Replay, Source Provenance, and System Health remain routed shells for later milestones.
 - The Operational Map uses MapLibre GL JS with local, token-free GeoJSON rendering for the same canonical events as the feed; its SVG surface is an explicit runtime fallback only if MapLibre initialization fails.
 
 ## Run locally
@@ -45,6 +45,18 @@ python -m app.infrastructure_import --source bts_ports --url <public-geojson-exp
 ```
 
 Each command prints JSON import stats (`fetched_count`, `inserted_count`, `updated_count`, `skipped_count`, and `duplicate_count`). The checked-in files are small representative test fixtures, not the full live datasets. Source landing pages, export guidance, and attribution are in [docs/data-sources.md](docs/data-sources.md).
+
+### Build the infrastructure graph
+
+After importing one or both Phase 2 datasets, explicitly rebuild deterministic derived relationships:
+
+```powershell
+python -m app.derivation
+```
+
+The builder creates only `CONNECTED_TO` (rail LineString endpoints within 100 m), `INTERSECTS` (actual geometry intersection), and `ADJACENT_TO` (a port point within 25 km of a rail corridor, with matching regions when both are supplied). Distances are WGS84 great-circle/segment estimates in SQLite and PostGIS spatial predicates in production. Edges are `DERIVED`, carry source record/provenance evidence, and are idempotent; stale derived edges are removed without touching future `SOURCE_OBSERVED` edges. No `DEPENDS_ON`, `SUPPLIES`, `ALTERNATIVE_TO`, or impact/scenario edges are inferred.
+
+The graph API is bounded: `/graph/nodes`, `/graph/nodes/{id}`, `/graph/nodes/{id}/neighbors`, `/graph/paths`, `/graph/subgraph`, `/graph/metrics`, and explicit `POST /graph/rebuild` expose sorted nodes, edges, provenance, and structural metrics. The browser workspace defaults to a depth-2 / 30-node subgraph and shows an honest empty state when no persisted edge exists.
 
 ## Verification
 

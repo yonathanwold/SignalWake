@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ChevronIcon, LinkIcon } from "../../components/icons";
+import { GraphWorkspace } from "../../components/graph-workspace";
 
 const details: Record<string, { title: string; kicker: string; body: string; next: string }> = {
   infrastructure: { title: "Infrastructure Graph", kicker: "DEPENDENCY CONTEXT", body: "Relationship-aware infrastructure context is not connected in Phase 01. This surface will consume canonical events once authoritative asset data and topology are available.", next: "Connect asset registry" },
@@ -11,8 +12,8 @@ const details: Record<string, { title: string; kicker: string; body: string; nex
 
 export default async function FutureSurfacePage({ params }: { params: Promise<{ section: string }> }) {
   const { section } = await params;
+  if (section === "infrastructure") return <GraphWorkspace />;
   const detail = details[section] ?? { title: "Signal surface", kicker: "ROUTE NOT FOUND", body: "This route is not part of the current SignalWake surface map.", next: "Operational Map" };
   const href = section === "provenance" ? "/feed" : "/";
   return <div className="future-page"><div className="future-kicker">{detail.kicker}</div><h1>{detail.title}</h1><p>{detail.body}</p><div className="future-rule" /><Link className="future-link" href={href}><LinkIcon size={15} /> {detail.next.toUpperCase()} <ChevronIcon size={14} /></Link><div className="future-status"><span className="future-status-dot" /> PHASE 01 / SURFACE REGISTERED <span>—</span> NO SIMULATED ANALYTICS</div></div>;
 }
-

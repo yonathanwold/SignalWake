@@ -87,3 +87,42 @@ export type InfrastructureAsset = {
   updated_at: string;
   provenance: InfrastructureProvenance[];
 };
+
+export type GraphMetrics = {
+  degree: number;
+  component_size: number;
+  betweenness_centrality: number;
+  is_articulation_point: boolean;
+  alternate_path_count: number;
+};
+
+export type GraphNode = {
+  id: string;
+  name: string;
+  type: string;
+  region: string | null;
+  source_key: string;
+  classification: "REFERENCE" | string;
+  asset: InfrastructureAsset;
+  metrics: GraphMetrics;
+};
+
+export type GraphEdge = {
+  id: string;
+  from_node_id: string;
+  to_node_id: string;
+  relationship_key: string;
+  relationship_type: "CONNECTED_TO" | "INTERSECTS" | "ADJACENT_TO" | string;
+  directionality: string;
+  relationship_source: "SOURCE_OBSERVED" | "DERIVED" | string;
+  source_relationship_id: string | null;
+  derivation_method: string | null;
+  derivation_version: string | null;
+  confidence: number | null;
+  evidence: Record<string, unknown>;
+  distance_km: number | null;
+  tolerance_m: number | null;
+};
+
+export type GraphNodeList = { items: GraphNode[]; total: number; limit: number; next_cursor: string | null };
+export type GraphSubgraph = { root_node_id: string; depth: number; max_nodes: number; truncated: boolean; nodes: GraphNode[]; edges: GraphEdge[] };
