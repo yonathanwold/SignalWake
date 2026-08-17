@@ -13,7 +13,7 @@ from app.schemas import EventResponse, Provenance, SourceResponse
 
 def _health(source: Source, now: datetime | None = None) -> str:
     now = now or datetime.now(timezone.utc)
-    if source.last_error and not source.last_success_at:
+    if source.last_error:
         return "ERROR"
     if source.last_success_at is None:
         return "UNKNOWN"

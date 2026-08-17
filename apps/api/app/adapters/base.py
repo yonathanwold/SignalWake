@@ -62,17 +62,19 @@ class SourceAdapter(ABC):
         self.user_agent = user_agent
         self.timeout_seconds = timeout_seconds
         self.adapter_version = adapter_version
+        self.last_http_status: int | None = None
 
-    async def fetch(self, client: httpx.AsyncClient | None = None) -> list[dict[str, Any]]:
+    async def fetch(self, client: httpx.AsyncClient | None = None) -> list[Any]:
         own_client = client is None
         client = client or httpx.AsyncClient(timeout=self.timeout_seconds)
+        self.last_http_status = None
         try:
             response = await self._request_with_retries(client)
             body = response.json()
             features = body.get("features") if isinstance(body, dict) else None
             if not isinstance(features, list):
                 raise AdapterError(f"{self.key} response did not contain a GeoJSON feature list")
-            return [feature for feature in features if isinstance(feature, dict)]
+            return features
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             log.error("source_fetch_failed", source=self.key, error=str(exc))
             raise AdapterError(f"{self.key} fetch failed: {exc}") from exc
@@ -88,6 +90,7 @@ class SourceAdapter(ABC):
                     self.endpoint,
                     headers={"Accept": "application/geo+json, application/json", "User-Agent": self.user_agent},
                 )
+                self.last_http_status = response.status_code
                 if response.status_code == 429 or response.status_code >= 500:
                     response.raise_for_status()
                 response.raise_for_status()
@@ -103,4 +106,3 @@ class SourceAdapter(ABC):
     @abstractmethod
     def normalize(self, feature: dict[str, Any], fetched_at: datetime | None = None) -> NormalizedEvent:
         """Convert one upstream feature to canonical event fields."""
-

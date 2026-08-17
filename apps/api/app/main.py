@@ -15,9 +15,9 @@ from app.adapters.nws import NWSAdapter
 from app.adapters.usgs import USGSAdapter
 from app.config import Settings, get_settings
 from app.database import create_engine, init_db, session_factory
-from app.ingest import ensure_source, persist_normalized
+from app.ingest import ensure_source, ingest_once, persist_normalized
 from app.logging import configure_logging
-from app.models import Source
+from app.models import Event, Source
 from app.repository import get_event, list_events, source_response
 from app.schemas import EventListResponse, EventResponse, HealthResponse, SourceResponse
 
@@ -42,10 +42,24 @@ def adapters(settings: Settings):
     ]
 
 
-async def seed_demo_data(session: AsyncSession, settings: Settings) -> None:
-    existing = int((await session.execute(select(Source))).scalars().first() is not None)
+async def seed_demo_data(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    fallback_source_keys: set[str] | None = None,
+) -> None:
+    seeded_keys: set[str] = set()
     for adapter, filename in zip(adapters(settings), ("nws_alerts.json", "usgs_earthquakes.json"), strict=True):
+        if fallback_source_keys is not None and adapter.key not in fallback_source_keys:
+            continue
         source = await ensure_source(session, adapter)
+        live_event = await session.execute(
+            select(Event.id)
+            .where(Event.source_id == source.id, Event.classification == "LIVE")
+            .limit(1)
+        )
+        if live_event.scalar_one_or_none() is not None:
+            continue
         fixture = json.loads((BASE_DIR / "fixtures" / filename).read_text(encoding="utf-8"))
         for feature in fixture.get("features", []):
             normalized = adapter.normalize(feature, datetime.now(timezone.utc))
@@ -57,13 +71,10 @@ async def seed_demo_data(session: AsyncSession, settings: Settings) -> None:
                 fetched_at=datetime.now(timezone.utc),
                 classification="DEMO",
             )
-        source.last_attempt_at = datetime.now(timezone.utc)
-        source.last_success_at = datetime.now(timezone.utc)
-        source.last_http_status = 200
-        source.last_error = None
+        seeded_keys.add(adapter.key)
     await session.commit()
-    if not existing:
-        log.info("demo_data_seeded", classification="DEMO")
+    if seeded_keys:
+        log.info("demo_data_seeded", classification="DEMO", fallback_sources=sorted(seeded_keys))
 
 
 @asynccontextmanager
@@ -77,11 +88,22 @@ async def lifespan(app: FastAPI):
     app.state.session_factory = factory
     await init_db(engine)
     async with factory() as session:
-        for adapter in adapters(settings):
+        configured_adapters = adapters(settings)
+        for adapter in configured_adapters:
             await ensure_source(session, adapter)
         await session.commit()
-        if settings.use_demo_data:
-            await seed_demo_data(session, settings)
+        fallback_source_keys = {adapter.key for adapter in configured_adapters}
+        if settings.ingest_on_startup:
+            report = await ingest_once(session, configured_adapters)
+            await session.commit()
+            fallback_source_keys = report.fallback_source_keys
+            log.info(
+                "startup_ingest_complete",
+                usable_sources=sorted(report.usable_source_keys),
+                fallback_sources=sorted(fallback_source_keys),
+            )
+        if settings.use_demo_data and fallback_source_keys:
+            await seed_demo_data(session, settings, fallback_source_keys=fallback_source_keys)
     yield
     await engine.dispose()
 
@@ -168,4 +190,3 @@ async def event_detail(
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
-

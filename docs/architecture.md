@@ -4,7 +4,9 @@
 
 ```text
 NWS / USGS
-    | async source adapters (timeout + retry + malformed payload handling)
+    | bounded startup ingest_once (timeout + retry + source health metadata)
+    v
+async source adapters (malformed payload handling)
     v
 RawObservation (immutable payload + hash + source record id)
     | deterministic normalizer
@@ -34,4 +36,3 @@ The SQLAlchemy model stores a serialized GeoJSON geometry for SQLite compatibili
 - `GET /events/{id}` — event detail including provenance and raw observation reference.
 
 The browser's map markers and feed rows are both projections of the same `Event` response. There is no second static map dataset.
-

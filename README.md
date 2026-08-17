@@ -4,10 +4,11 @@ SIGNALWAKE is an operational event intelligence foundation. It turns authoritati
 
 The first slice is intentionally honest about its boundary:
 
-- `LIVE` means a successful fetch from NWS or USGS.
-- `DEMO` means deterministic fixture data used when the API has no database or the browser cannot reach the API.
+- `LIVE` means a successful startup fetch, normalization, and persistence pass from NWS or USGS.
+- `DEMO` means deterministic fixture data used only when startup ingestion is disabled, a source has no usable live events, or the browser cannot reach the API.
 - `DERIVED` means normalized fields such as severity, type, and provenance; it does not mean an infrastructure impact prediction.
 - Infrastructure Graph, Scenario Lab, Historical Replay, Source Provenance, and System Health are routed shells for later milestones. They do not invent analytics.
+- The Operational Map uses MapLibre GL JS with local, token-free GeoJSON rendering for the same canonical events as the feed; its SVG surface is an explicit runtime fallback only if MapLibre initialization fails.
 
 ## Run locally
 
@@ -30,7 +31,7 @@ The first slice is intentionally honest about its boundary:
    npm.cmd run dev
    ```
 
-Open `http://localhost:3000`. The browser will use the API when available and fall back to clearly labeled deterministic demo events when it is not.
+Open `http://localhost:3000`. By default the API performs one bounded real fetch from both authoritative sources during startup. With `USE_DEMO_DATA=true`, fixtures are used only per source when that live pass is unavailable or produces no usable events; set it to `false` to run without fixture fallback. The browser also falls back to clearly labeled deterministic demo events when it cannot reach the API.
 
 ## Verification
 
@@ -48,4 +49,3 @@ npm.cmd run build
 Docker Compose describes the production-shaped Postgres/PostGIS service, but local verification does not require Docker. SQLite is used only for deterministic tests and demo development; the production migration keeps geography in PostGIS geometry columns with GiST indexes.
 
 See [docs/architecture.md](docs/architecture.md), [docs/development.md](docs/development.md), and [docs/data-sources.md](docs/data-sources.md).
-

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     database_url: str = "sqlite+aiosqlite:///./signalwake.db"
+    ingest_on_startup: bool = True
     use_demo_data: bool = True
     nws_alerts_url: str = "https://api.weather.gov/alerts/active?status=actual"
     usgs_earthquake_url: str = (
@@ -22,4 +23,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

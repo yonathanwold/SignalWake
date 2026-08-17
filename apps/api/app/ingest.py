@@ -1,17 +1,48 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Iterable
 
 import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.base import NormalizedEvent, SourceAdapter, payload_hash
+from app.adapters.base import AdapterError, NormalizedEvent, SourceAdapter, payload_hash
 from app.models import Event, ProcessingState, RawObservation, Source
 
 log = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class AdapterIngestResult:
+    source_key: str
+    attempted_at: datetime
+    fetch_succeeded: bool
+    fetched_count: int = 0
+    normalized_count: int = 0
+    skipped_count: int = 0
+    http_status: int | None = None
+    error: str | None = None
+
+    @property
+    def has_usable_events(self) -> bool:
+        return self.normalized_count > 0
+
+
+@dataclass(frozen=True)
+class IngestReport:
+    results: tuple[AdapterIngestResult, ...]
+
+    @property
+    def usable_source_keys(self) -> set[str]:
+        return {result.source_key for result in self.results if result.has_usable_events}
+
+    @property
+    def fallback_source_keys(self) -> set[str]:
+        return {result.source_key for result in self.results if not result.has_usable_events}
 
 
 async def ensure_source(session: AsyncSession, adapter: SourceAdapter) -> Source:
@@ -27,6 +58,109 @@ async def ensure_source(session: AsyncSession, adapter: SourceAdapter) -> Source
         session.add(source)
         await session.flush()
     return source
+
+
+async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAdapter]) -> IngestReport:
+    """Fetch, normalize, and persist one bounded pass over every configured source."""
+
+    results: list[AdapterIngestResult] = []
+    for adapter in source_adapters:
+        attempted_at = datetime.now(timezone.utc)
+        source = await ensure_source(session, adapter)
+        source.last_attempt_at = attempted_at
+        source.last_http_status = None
+        try:
+            features = await adapter.fetch()
+        except Exception as exc:  # noqa: BLE001 - one source must not block the other
+            error = str(exc)
+            source.last_error = error
+            source.last_http_status = adapter.last_http_status
+            source.freshness_seconds = None
+            log.error(
+                "source_ingest_failed",
+                source=adapter.key,
+                attempted_at=attempted_at.isoformat(),
+                http_status=adapter.last_http_status,
+                error=error,
+            )
+            results.append(
+                AdapterIngestResult(
+                    source_key=adapter.key,
+                    attempted_at=attempted_at,
+                    fetch_succeeded=False,
+                    http_status=adapter.last_http_status,
+                    error=error,
+                )
+            )
+            continue
+
+        normalized_count = 0
+        skipped_count = 0
+        latest_observed: datetime | None = None
+        for index, feature in enumerate(features):
+            if not isinstance(feature, dict):
+                skipped_count += 1
+                log.warning("source_feature_skipped", source=adapter.key, index=index, error="feature is not an object")
+                continue
+            try:
+                normalized = adapter.normalize(feature, attempted_at)
+                await persist_normalized(
+                    session,
+                    source,
+                    adapter,
+                    normalized,
+                    fetched_at=attempted_at,
+                    classification="LIVE",
+                )
+            except (AdapterError, AttributeError, KeyError, TypeError, ValueError) as exc:
+                skipped_count += 1
+                log.warning(
+                    "source_feature_skipped",
+                    source=adapter.key,
+                    index=index,
+                    error=str(exc),
+                )
+                continue
+            normalized_count += 1
+            latest_observed = max(latest_observed, normalized.observed_at) if latest_observed else normalized.observed_at
+
+        source.last_success_at = attempted_at
+        source.last_http_status = adapter.last_http_status
+        source.freshness_seconds = (
+            max(0, int((attempted_at - latest_observed).total_seconds())) if latest_observed else 0
+        )
+        error = None
+        if skipped_count:
+            error = f"{skipped_count} malformed feature(s) skipped"
+            source.last_error = error
+            log.warning(
+                "source_ingest_partial",
+                source=adapter.key,
+                fetched_count=len(features),
+                normalized_count=normalized_count,
+                skipped_count=skipped_count,
+            )
+        else:
+            source.last_error = None
+            log.info(
+                "source_ingest_succeeded",
+                source=adapter.key,
+                fetched_count=len(features),
+                normalized_count=normalized_count,
+            )
+        results.append(
+            AdapterIngestResult(
+                source_key=adapter.key,
+                attempted_at=attempted_at,
+                fetch_succeeded=True,
+                fetched_count=len(features),
+                normalized_count=normalized_count,
+                skipped_count=skipped_count,
+                http_status=adapter.last_http_status,
+                error=error,
+            )
+        )
+    return IngestReport(tuple(results))
 
 
 async def persist_normalized(
@@ -69,6 +203,36 @@ async def persist_normalized(
         )
     ).scalar_one_or_none()
     if existing:
+        existing.raw_observation_id = raw.id
+        existing.event_type = normalized.event_type
+        existing.title = normalized.title
+        existing.summary = normalized.summary
+        existing.severity = normalized.severity
+        existing.status = normalized.status
+        existing.observed_at = normalized.observed_at
+        existing.effective_at = normalized.effective_at
+        existing.expires_at = normalized.expires_at
+        existing.received_at = fetched_at
+        existing.latitude = normalized.latitude
+        existing.longitude = normalized.longitude
+        existing.geometry_geojson = json.dumps(normalized.geometry, sort_keys=True) if normalized.geometry else None
+        existing.provenance_json = json.dumps(
+            [
+                {
+                    "source_record_id": normalized.source_event_id,
+                    "source_url": adapter.endpoint,
+                    "fetched_at": fetched_at.isoformat(),
+                    "raw_observation_id": raw.id,
+                    "adapter_version": adapter.adapter_version,
+                    "payload_hash": digest,
+                }
+            ]
+        )
+        existing.payload_hash = digest
+        existing.normalized_version = adapter.adapter_version
+        if classification == "LIVE" or existing.classification != "LIVE":
+            existing.classification = classification
+        raw.processing_state = ProcessingState.NORMALIZED.value
         return existing
     event = Event(
         source_id=source.id,
@@ -116,4 +280,3 @@ async def persist_normalized(
             )
         ).scalar_one()
     return event
-
