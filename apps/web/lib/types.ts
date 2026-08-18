@@ -74,6 +74,7 @@ export type LayerCatalogItem = {
   source_key: string | null;
   error: string | null;
   provenance: Record<string, unknown>;
+  coverage: Record<string, unknown>;
 };
 
 export type LayerCatalogResponse = {

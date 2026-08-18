@@ -15,6 +15,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from app.adapters.airnow import AirNowAdapter
+from app.adapters.coops import COOPSAdapter
+from app.adapters.firms import FIRMSAdapter
 from app.adapters.nhc import NHCAdapter
 from app.adapters.nws import NWSAdapter
 from app.adapters.nws_observations import NWSObservationsAdapter
@@ -123,7 +126,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 def adapters(settings: Settings):
-    return [
+    configured = [
         NWSAdapter(
             settings.nws_alerts_url,
             settings.source_user_agent,
@@ -147,6 +150,7 @@ def adapters(settings: Settings):
             settings.source_user_agent,
             settings.request_timeout_seconds,
             settings.adapter_version,
+            states=[state.strip() for state in settings.usgs_water_states.split(",") if state.strip()],
         ),
         NHCAdapter(
             settings.nhc_url,
@@ -154,7 +158,42 @@ def adapters(settings: Settings):
             settings.request_timeout_seconds,
             settings.adapter_version,
         ),
+        COOPSAdapter(
+            settings.noaa_coops_metadata_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            settings.adapter_version,
+            data_endpoint=settings.noaa_coops_data_url,
+            station_ids=[station.strip() for station in settings.noaa_coops_station_ids.split(",") if station.strip()],
+            station_limit=settings.noaa_coops_station_limit,
+        ),
     ]
+    if settings.firms_map_key:
+        configured.append(
+            FIRMSAdapter(
+                settings.firms_url,
+                settings.source_user_agent,
+                settings.request_timeout_seconds,
+                settings.adapter_version,
+                map_key=settings.firms_map_key,
+                area=settings.firms_area,
+                product=settings.firms_product,
+                days=settings.firms_days,
+            )
+        )
+    if settings.airnow_api_key:
+        configured.append(
+            AirNowAdapter(
+                settings.airnow_url,
+                settings.source_user_agent,
+                settings.request_timeout_seconds,
+                settings.adapter_version,
+                api_key=settings.airnow_api_key,
+                bbox=settings.airnow_bbox,
+                parameters=settings.airnow_parameters,
+            )
+        )
+    return configured
 
 
 async def seed_demo_data(
@@ -233,7 +272,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SIGNALWAKE API",
     version="0.1.0",
-    description="Authoritative NWS alerts and station observations, USGS earthquake and water observations, and NHC systems normalized into canonical operational events.",
+    description="Authoritative NWS alerts and station observations, USGS earthquake and water observations, NHC systems, NOAA CO-OPS water levels, NASA FIRMS fires, and AirNow air quality normalized into canonical operational events.",
     lifespan=lifespan,
 )
 app.state.startup_ready = True
@@ -568,7 +607,7 @@ async def events(
     severity: str | None = Query(None),
     start_time: datetime | None = Query(None),
     end_time: datetime | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=1000),
     cursor: int = Query(0, ge=0),
     page: int | None = Query(None, ge=1),
     session: AsyncSession = Depends(session_dependency),
@@ -635,7 +674,7 @@ def _event_layer_feature(item: EventResponse) -> dict[str, object] | None:
 @app.get("/layers/{layer_key}/data", response_model=LayerDataResponse, tags=["layers"])
 async def layer_data(
     layer_key: str,
-    limit: int = Query(200, ge=1, le=500),
+    limit: int = Query(200, ge=1, le=1000),
     session: AsyncSession = Depends(session_dependency),
 ) -> LayerDataResponse:
     specs = specs_by_key()
@@ -647,7 +686,16 @@ async def layer_data(
     item = next(row for row in await catalog_items(session, window, generated_at=generated_at) if row.key == layer_key)
     features: list[dict[str, object]] = []
     if spec.source_key:
-        if layer_key in {"nws_alerts", "nws_observations", "usgs_earthquakes", "usgs_water", "nhc_systems"}:
+        if layer_key in {
+            "nws_alerts",
+            "nws_observations",
+            "usgs_earthquakes",
+            "usgs_water",
+            "nhc_systems",
+            "nasa_firms",
+            "airnow",
+            "noaa_coops",
+        }:
             rows, _, _ = await list_events(
                 session,
                 source=spec.source_key,

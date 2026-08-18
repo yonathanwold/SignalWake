@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models import InfrastructureAsset, InfrastructureSource, Source
 from app.schemas import LayerCatalogItem
 from app.temporal import TemporalWindow
@@ -35,6 +37,7 @@ class CatalogSpec:
     adapter_version: str = CATALOG_VERSION
     source_key: str | None = None
     provenance: dict[str, object] | None = None
+    coverage: dict[str, Any] | None = None
 
 
 def _spec(
@@ -50,6 +53,7 @@ def _spec(
     *,
     source_key: str | None = None,
     adapter_version: str = CATALOG_VERSION,
+    coverage: dict[str, Any] | None = None,
 ) -> CatalogSpec:
     return CatalogSpec(
         key,
@@ -64,6 +68,7 @@ def _spec(
         adapter_version,
         source_key,
         {"registry_version": CATALOG_VERSION, "authority": name},
+        coverage,
     )
 
 
@@ -73,11 +78,11 @@ CATALOG: tuple[CatalogSpec, ...] = (
     _spec("nws_observations", "NWS observations", "weather", "Point", "station observations", "observation time", True, "https://api.weather.gov/observations?limit=500", "LIVE", source_key="nws_observations"),
     _spec("nws_storm_reports", "NWS storm reports", "weather", "Point", "storm reports", "report time", True, "https://www.spc.noaa.gov/climo/reports/", "NOT_CONNECTED"),
     _spec("usgs_earthquakes", "USGS earthquakes", "seismic", "Point", "observed events", "event time and updated time", True, "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson", "LIVE", source_key="usgs"),
-    _spec("usgs_water", "USGS water services", "hydrology", "Point", "near-real-time gauge observations", "observation time", True, "https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=VA&parameterCd=00060&siteStatus=active", "NEAR_REAL_TIME", source_key="usgs_water"),
-    _spec("nasa_firms", "NASA FIRMS active fire", "fire", "Point", "near-real-time detections", "acquisition time", True, "https://firms.modaps.eosdis.nasa.gov/", "REQUIRES_CREDENTIALS"),
-    _spec("airnow", "AirNow air quality", "air_quality", "Point", "near-real-time observations", "observation time", True, "https://docs.airnowapi.org/", "REQUIRES_CREDENTIALS"),
+    _spec("usgs_water", "USGS water services", "hydrology", "Point", "near-real-time gauge observations", "observation time", True, "https://waterservices.usgs.gov/nwis/iv/?format=json&parameterCd=00060&siteStatus=active", "NEAR_REAL_TIME", source_key="usgs_water", coverage={"mode": "bounded state fan-out", "max_states": 25, "max_features": 1000}),
+    _spec("nasa_firms", "NASA FIRMS active fire", "fire", "Point", "near-real-time detections", "acquisition time", True, "https://firms.modaps.eosdis.nasa.gov/api/area/csv", "REQUIRES_CREDENTIALS", source_key="nasa_firms", coverage={"requires": "FIRMS_MAP_KEY", "days_max": 2, "max_features": 1000}),
+    _spec("airnow", "AirNow air quality", "air_quality", "Point", "near-real-time observations", "observation time", True, "https://www.airnowapi.org/aq/data/", "REQUIRES_CREDENTIALS", source_key="airnow", coverage={"requires": "AIRNOW_API_KEY", "max_features": 1000}),
     _spec("nhc_systems", "NHC current tropical systems", "tropical_weather", "Point/Polygon", "current systems", "advisory and valid times", True, "https://www.nhc.noaa.gov/CurrentStorms.json", "NEAR_REAL_TIME", source_key="nhc"),
-    _spec("noaa_coops", "NOAA CO-OPS water levels", "coastal", "Point", "station observations", "observation time", True, "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter", "NOT_CONNECTED"),
+    _spec("noaa_coops", "NOAA CO-OPS water levels", "coastal", "Point", "station observations", "observation time", True, "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter", "NEAR_REAL_TIME", source_key="noaa_coops", coverage={"mode": "bounded station set", "max_stations": 25, "max_features": 25}),
     _spec("bts", "BTS transportation assets", "transportation", "Point/Line/Polygon", "reference assets", "source publication/update time", False, "https://data-usdot.opendata.arcgis.com/", "REFERENCE", source_key="bts_ports"),
     _spec("fra", "FRA rail network", "transportation", "Line", "reference assets", "source publication/update time", False, "https://data-usdot.opendata.arcgis.com/", "REFERENCE", source_key="fra_rail"),
     _spec("faa", "FAA facilities and advisories", "aviation", "Point/Polygon", "reference and operational data", "source timestamp", True, "https://www.faa.gov/air_traffic/flight_info/aeronav/aero_data/", "NOT_CONNECTED"),
@@ -104,6 +109,31 @@ def specs_by_key() -> dict[str, CatalogSpec]:
     return {item.key: item for item in CATALOG}
 
 
+def _coverage(spec: CatalogSpec) -> dict[str, Any]:
+    settings = get_settings()
+    coverage = dict(spec.coverage or {})
+    if spec.key == "usgs_water":
+        coverage.update(
+            {
+                "states": [state.strip().upper() for state in settings.usgs_water_states.split(",") if state.strip()][:25],
+                "parameter": "00060",
+                "max_features": 1000,
+            }
+        )
+    elif spec.key == "nasa_firms":
+        coverage.update({"area": settings.firms_area, "product": settings.firms_product, "days": settings.firms_days})
+    elif spec.key == "airnow":
+        coverage.update({"bbox": settings.airnow_bbox, "parameters": settings.airnow_parameters, "hours": 48})
+    elif spec.key == "noaa_coops":
+        coverage.update(
+            {
+                "station_ids": [station.strip() for station in settings.noaa_coops_station_ids.split(",") if station.strip()],
+                "station_limit": settings.noaa_coops_station_limit,
+            }
+        )
+    return coverage
+
+
 async def catalog_items(
     session: AsyncSession,
     window: TemporalWindow,
@@ -128,15 +158,18 @@ async def catalog_items(
         adapter_version = spec.adapter_version
         endpoint = spec.endpoint
         if source is not None:
-            status = (
-                "ERROR"
-                if source.last_error and source.last_success_at is None
-                else "DEGRADED"
-                if source.last_error
-                else "LIVE"
-                if source.last_success_at
-                else "NOT_CONNECTED"
-            )
+            if spec.status == "REQUIRES_CREDENTIALS" and source.last_attempt_at is None:
+                status = spec.status
+            else:
+                status = (
+                    "ERROR"
+                    if source.last_error and source.last_success_at is None
+                    else "DEGRADED"
+                    if source.last_error
+                    else "LIVE"
+                    if source.last_success_at
+                    else "NOT_CONNECTED"
+                )
             last_refresh = source.last_success_at or source.last_attempt_at
             counts = {
                 "retrieved": int(source.last_records_retrieved or 0),
@@ -177,6 +210,7 @@ async def catalog_items(
                 counts=counts,
                 source_key=spec.source_key,
                 error=error,
+                coverage=_coverage(spec),
                 provenance={**(spec.provenance or {}), "window_start": window.start.isoformat(), "window_end": window.end.isoformat()},
             )
         )

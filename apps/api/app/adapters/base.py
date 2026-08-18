@@ -85,12 +85,15 @@ class SourceAdapter(ABC):
             if own_client:
                 await client.aclose()
 
-    async def _request_with_retries(self, client: httpx.AsyncClient) -> httpx.Response:
+    async def _request_with_retries(
+        self, client: httpx.AsyncClient, endpoint: str | None = None
+    ) -> httpx.Response:
         last_error: Exception | None = None
+        request_endpoint = endpoint or self.endpoint
         for attempt in range(3):
             try:
                 response = await client.get(
-                    self.endpoint,
+                    request_endpoint,
                     headers={"Accept": "application/geo+json, application/json", "User-Agent": self.user_agent},
                 )
                 self.last_http_status = response.status_code

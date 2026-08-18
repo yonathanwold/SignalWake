@@ -117,3 +117,20 @@ async def test_events_rejects_historical_override_outside_current_48_hours(db_fa
         )
     assert response.status_code == 422
     assert "past 48 hours" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_events_and_layers_accept_1000_but_reject_larger_limits(db_factory):
+    app.state.session_factory = db_factory
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        events = await client.get("/events", params={"limit": 1000})
+        too_many_events = await client.get("/events", params={"limit": 1001})
+        layer = await client.get("/layers/nasa_firms/data", params={"limit": 1000})
+        too_many_layer = await client.get("/layers/nasa_firms/data", params={"limit": 1001})
+    assert events.status_code == 200
+    assert events.json()["limit"] == 1000
+    assert too_many_events.status_code == 422
+    assert layer.status_code == 200
+    assert layer.json()["bounded_limit"] == 1000
+    assert too_many_layer.status_code == 422

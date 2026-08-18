@@ -128,6 +128,7 @@ class LayerCatalogItem(BaseModel):
     source_key: str | None = None
     error: str | None = None
     provenance: dict[str, Any] = Field(default_factory=dict)
+    coverage: dict[str, Any] = Field(default_factory=dict)
 
 
 class LayerCatalogResponse(BaseModel):

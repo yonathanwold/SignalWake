@@ -80,7 +80,7 @@ an 800-edge response bound.
 
 Adapters send a descriptive user-agent, enforce a timeout, retry transient 429/5xx responses with bounded exponential backoff, and return structured errors for malformed JSON or missing fields. `ingest_once` runs one bounded pass over every adapter, records source attempt/success/error metadata, preserves each valid raw payload, and writes canonical `LIVE` events idempotently. Malformed features are logged and skipped without blocking the other source. Tests use checked-in JSON fixtures and monkeypatch the fetch boundary, so CI never calls NWS or USGS.
 
-The USGS adapter uses the authoritative rolling past-day GeoJSON summary feed. The API keeps event pages bounded at 200 records, and the web map requests that maximum so the live view is not truncated within the past-day window; it does not download unbounded history.
+The USGS adapter uses the authoritative rolling past-day GeoJSON summary feed. The API keeps operational event pages bounded at 1,000 records inside the past 48-hour UTC contract, and the web map requests that maximum so the live view is not truncated; it does not download unbounded history. Point observations are clustered at national zoom while retaining source coordinates.
 
 ## Startup ingestion and fallback
 

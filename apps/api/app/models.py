@@ -97,6 +97,9 @@ class EventType(str, enum.Enum):
     EARTHQUAKE = "earthquake"
     WATER_LEVEL_OBSERVATION = "water_level_observation"
     TROPICAL_SYSTEM = "tropical_system"
+    FIRE_DETECTION = "fire_detection"
+    AIR_QUALITY_OBSERVATION = "air_quality_observation"
+    COOPS_WATER_LEVEL = "coops_water_level"
 
 
 class Severity(str, enum.Enum):

@@ -40,16 +40,33 @@ converted into live events.
 
 ## Additional connected near-real-time adapters
 
-- **USGS water services** — a bounded Virginia instantaneous-value request is
-  normalized to point observations (`water_level_observation`) using the gauge
-  coordinates and provider timestamp. The adapter caps normalized rows and
-  records a source error instead of returning invented gauge locations.
+- **USGS water services** — a bounded state fan-out (default:
+  `VA,CA,TX,WA,FL,NY,PA,OH,IL,CO,AZ,NC`; maximum 25 states and 1,000 rows) is
+  normalized to point observations (`water_level_observation`) using gauge
+  coordinates and provider timestamps. The adapter records a source error
+  instead of returning invented gauge locations.
 - **National Hurricane Center** — `CurrentStorms.json` is parsed when the
   public endpoint returns its active-storm list. Only provider-supplied
   positions and timestamps become `tropical_system` events; malformed or empty
   responses are an honest source error/empty run.
+- **NOAA CO-OPS** — public station metadata plus latest `water_level` readings.
+  Startup uses a capped metadata subset (maximum 25 stations), or explicitly
+  configured `NOAA_COOPS_STATION_IDS`; station coordinates always come from the
+  metadata response.
 
-NWS alerts, NWS station observations, USGS earthquakes, USGS water, and NHC systems are persisted through
+## Credentialed live adapters
+
+- **NASA FIRMS** — a real VIIRS NRT area CSV request is enabled only with
+  `FIRMS_MAP_KEY`. Requests are bounded to `FIRMS_AREA`, `FIRMS_PRODUCT`, at
+  most two days, and 1,000 detections. Without a key the catalog remains
+  `REQUIRES_CREDENTIALS` and the layer is empty.
+- **AirNow** — a real JSON request is enabled only with `AIRNOW_API_KEY`.
+  Requests are bounded to `AIRNOW_BBOX`, `AIRNOW_PARAMETERS`, 48 hours, and
+  1,000 observations. Without a key no request is made and the catalog remains
+  `REQUIRES_CREDENTIALS`.
+
+NWS alerts, NWS station observations, USGS earthquakes, USGS water, NHC systems,
+NOAA CO-OPS, and configured FIRMS/AirNow adapters are persisted through
 the same idempotent raw-observation/event path. Startup still performs one
 bounded pass; it is not a scheduler.
 
@@ -65,7 +82,7 @@ source URL, temporal semantics, adapter version, refresh/counts, and one of
 `LIVE`, `NEAR_REAL_TIME`, `REFERENCE`, `REQUIRES_CREDENTIALS`,
 `NOT_CONNECTED`, `DEGRADED`, or `ERROR`.
 
-`GET /layers/{key}/data?limit=...` is bounded to 500 features and returns
+`GET /layers/{key}/data?limit=...` is bounded to 1,000 features and returns
 GeoJSON-like source geometry, freshness/provenance, and the same 48-hour
 metadata. Credentialed, unconnected, and reference-only layers return an empty
 feature list with their status; SIGNALWAKE never emits placeholder dots or
@@ -74,9 +91,9 @@ tile metadata rather than downloaded into the browser.
 
 ## Startup ingestion behavior
 
-When `INGEST_ON_STARTUP=true` (the default), the API runs one bounded fetch/normalize/persist pass for NWS alerts, NWS station observations, USGS earthquakes, USGS water, and NHC. Each source records `last_attempt_at`, `last_success_at`, `last_http_status`, `last_error`, and `freshness_seconds`. Valid features become `LIVE` canonical events with their raw payload and provenance; malformed features are logged and skipped while the remaining features continue.
+When `INGEST_ON_STARTUP=true` (the default), the API runs one bounded fetch/normalize/persist pass for NWS alerts, NWS station observations, USGS earthquakes, bounded USGS water states, NHC, and NOAA CO-OPS. FIRMS and AirNow join the pass only when their real credentials are configured. Each source records `last_attempt_at`, `last_success_at`, `last_http_status`, `last_error`, and `freshness_seconds`. Valid features become `LIVE` canonical events with their raw payload and provenance; malformed features are logged and skipped while the remaining features continue.
 
-The web map requests `/events?limit=200`, matching the API's maximum event page size so the complete bounded source window can render without requesting unbounded history.
+The web map requests `/events?limit=1000`, matching the API's maximum event page size so the complete bounded source window can render without requesting unbounded history. Point features use a MapLibre cluster source at national zoom; the underlying source coordinates remain unchanged when a cluster expands.
 
 The pass is idempotent by source-scoped record identity and payload hash. `USE_DEMO_DATA=true` is only a fallback for the NWS/USGS deterministic fixtures: fixture rows are seeded for a source when its live fetch fails or produces no usable events, and never replace a source that produced successful `LIVE` events. No permanent queue or scheduler is included; a later worker can call the same service boundary. The API never fabricates freshness: unavailable values are represented as `null`/`UNKNOWN`, and a source error is surfaced as `ERROR`.
 

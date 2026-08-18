@@ -79,6 +79,13 @@ function eventCollection(events: CanonicalEvent[]): MapCollection {
   return { type: "FeatureCollection", features };
 }
 
+function eventPointCollection(events: CanonicalEvent[]): MapCollection {
+  return {
+    type: "FeatureCollection",
+    features: eventCollection(events).features.filter((feature) => feature.geometry.type === "Point"),
+  };
+}
+
 function infrastructureCollection(infrastructure: InfrastructureAsset[]): MapCollection {
   const features: MapFeature[] = [];
   for (const asset of infrastructure) {
@@ -119,7 +126,7 @@ function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[
     return [
       { id: `event-${safeSource}-polygons`, type: "fill", source: "events", filter: [...filter, polygonGeometry], paint: { "fill-color": severityColor, "fill-opacity": 0.18 } },
       { id: `event-${safeSource}-polygon-outline`, type: "line", source: "events", filter: [...filter, polygonGeometry], paint: { "line-color": severityColor, "line-width": 2, "line-opacity": 0.9 } },
-      { id: `event-${safeSource}-points`, type: "circle", source: "events", filter: [...filter, ["==", ["geometry-type"], "Point"]], paint: { "circle-radius": 5, "circle-color": severityColor, "circle-stroke-color": "#080808", "circle-stroke-width": 1.5 } },
+      { id: `event-${safeSource}-points`, type: "circle", source: "event-points", filter: [...filter, ["==", ["geometry-type"], "Point"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 5, "circle-color": severityColor, "circle-stroke-color": "#080808", "circle-stroke-width": 1.5 } },
     ];
   });
   return {
@@ -132,6 +139,7 @@ function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[
         attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a> <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">© CARTO</a>',
       },
       events: { type: "geojson", data: eventCollection(events) },
+      "event-points": { type: "geojson", data: eventPointCollection(events), cluster: true, clusterRadius: 42, clusterMaxZoom: 5 },
       infrastructure: { type: "geojson", data: infrastructureCollection(infrastructure) },
     },
     layers: [
@@ -139,10 +147,11 @@ function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[
       { id: "basemap", type: "raster", source: BASEMAP_SOURCE_ID, paint: { "raster-opacity": 1 } },
       { id: "event-polygons", type: "fill", source: "events", filter: ["all", ["==", ["get", "source"], "nws"], polygonGeometry], paint: { "fill-color": severityColor, "fill-opacity": 0.2 } },
       { id: "event-polygon-outline", type: "line", source: "events", filter: ["all", ["==", ["get", "source"], "nws"], polygonGeometry], paint: { "line-color": severityColor, "line-width": 2, "line-opacity": 0.95 } },
-      { id: "event-nws-point-halo", type: "circle", source: "events", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "nws"]], paint: { "circle-radius": 10, "circle-color": "transparent", "circle-stroke-color": severityColor, "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.5 } },
-      { id: "event-nws-points", type: "circle", source: "events", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "nws"]], paint: { "circle-radius": 5, "circle-color": severityColor, "circle-stroke-color": "#09111b", "circle-stroke-width": 1.5 } },
-      { id: "event-usgs-point-halo", type: "circle", source: "events", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"]], paint: { "circle-radius": 10, "circle-color": "transparent", "circle-stroke-color": severityColor, "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.5 } },
-      { id: "event-usgs-points", type: "circle", source: "events", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"]], paint: { "circle-radius": 5, "circle-color": severityColor, "circle-stroke-color": "#09111b", "circle-stroke-width": 1.5 } },
+      { id: "event-clusters", type: "circle", source: "event-points", filter: ["has", "point_count"], paint: { "circle-radius": ["step", ["get", "point_count"], 14, 25, 18, 100, 23], "circle-color": "#22c7a8", "circle-stroke-color": "#071312", "circle-stroke-width": 2, "circle-opacity": 0.9 } },
+      { id: "event-nws-point-halo", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "nws"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 10, "circle-color": "transparent", "circle-stroke-color": severityColor, "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.5 } },
+      { id: "event-nws-points", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "nws"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 5, "circle-color": severityColor, "circle-stroke-color": "#09111b", "circle-stroke-width": 1.5 } },
+      { id: "event-usgs-point-halo", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 10, "circle-color": "transparent", "circle-stroke-color": severityColor, "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.5 } },
+      { id: "event-usgs-points", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 5, "circle-color": severityColor, "circle-stroke-color": "#09111b", "circle-stroke-width": 1.5 } },
       { id: "infrastructure-polygons", type: "fill", source: "infrastructure", filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": "#a986f5", "fill-opacity": 0.15 } },
       { id: "infrastructure-rail-lines", type: "line", source: "infrastructure", filter: ["all", ["==", ["geometry-type"], "LineString"], ["==", ["get", "assetType"], "rail_corridor"]], paint: { "line-color": "#6ab6ff", "line-width": 2.6, "line-opacity": 0.88, "line-dasharray": [1, 1.5] } },
       { id: "infrastructure-port-points", type: "circle", source: "infrastructure", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "assetType"], "port"]], paint: { "circle-radius": 6, "circle-color": "#f1ad38", "circle-stroke-color": "#15100a", "circle-stroke-width": 1.5 } },
@@ -269,6 +278,17 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
           map.on("mouseenter", layerId, () => { map.getCanvas().style.cursor = "pointer"; });
           map.on("mouseleave", layerId, () => { map.getCanvas().style.cursor = ""; });
         });
+        map.on("click", "event-clusters", (event) => {
+          const feature = event.features?.[0] as { properties?: Record<string, unknown> } | undefined;
+          const clusterId = feature?.properties?.cluster_id;
+          if (typeof clusterId !== "number") return;
+          const source = map.getSource("event-points") as unknown as { getClusterExpansionZoom?: (id: number, callback: (error: Error | null, zoom: number) => void) => void };
+          source.getClusterExpansionZoom?.(clusterId, (error, zoom) => {
+            if (!error) map.easeTo({ center: event.lngLat, zoom });
+          });
+        });
+        map.on("mouseenter", "event-clusters", () => { map.getCanvas().style.cursor = "pointer"; });
+        map.on("mouseleave", "event-clusters", () => { map.getCanvas().style.cursor = ""; });
         map.on("movestart", () => setMapTooltip(null));
         map.on("moveend", () => {
           const center = map.getCenter();
@@ -290,6 +310,8 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
   useEffect(() => {
     const source = mapRef.current?.getSource("events") as import("maplibre-gl").GeoJSONSource | undefined;
     source?.setData(eventCollection(events) as never);
+    const pointSource = mapRef.current?.getSource("event-points") as import("maplibre-gl").GeoJSONSource | undefined;
+    pointSource?.setData(eventPointCollection(events) as never);
   }, [events]);
 
   useEffect(() => {
@@ -303,10 +325,11 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
     const visibility = (visible: boolean) => visible ? "visible" : "none";
     ["event-polygons", "event-polygon-outline", "event-nws-points", "event-nws-point-halo"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showNws)));
     ["event-usgs-points", "event-usgs-point-halo"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showUsgs)));
+    map.setLayoutProperty("event-clusters", "visibility", visibility(showNws && showUsgs && !Object.values(hiddenLayers).some(Boolean)));
     map.setLayoutProperty("infrastructure-polygons", "visibility", visibility(showPorts));
     map.setLayoutProperty("infrastructure-port-points", "visibility", visibility(showPorts));
     ["infrastructure-rail-lines", "infrastructure-other-points"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showRail)));
-  }, [mapRuntime, showNws, showUsgs, showPorts, showRail]);
+  }, [hiddenLayers, mapRuntime, showNws, showUsgs, showPorts, showRail]);
 
   useEffect(() => {
     const map = mapRef.current;

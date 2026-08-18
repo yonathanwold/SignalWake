@@ -91,14 +91,14 @@ const catalogLabels: Array<[string, string, string, string]> = [
 ];
 
 export const demoLayerCatalog: LayerCatalogItem[] = catalogLabels.map(([key, name, status, category]) => ({
-  key, name, category, geometry_kind: "source geometry", data_kind: "catalog metadata only", temporal_semantics: "source timestamp", applies_to_48h_window: status !== "REFERENCE", endpoint: "", status, adapter_version: "1.0.0", last_refresh: null, counts: {}, source_key: ({ nws_alerts: "nws", nws_observations: "nws_observations", usgs_earthquakes: "usgs", usgs_water: "usgs_water", nhc_systems: "nhc" } as Record<string, string>)[key] ?? null, error: null, provenance: {},
+  key, name, category, geometry_kind: "source geometry", data_kind: "catalog metadata only", temporal_semantics: "source timestamp", applies_to_48h_window: status !== "REFERENCE", endpoint: "", status, adapter_version: "1.0.0", last_refresh: null, counts: {}, source_key: ({ nws_alerts: "nws", nws_observations: "nws_observations", usgs_earthquakes: "usgs", usgs_water: "usgs_water", nhc_systems: "nhc", nasa_firms: "nasa_firms", airnow: "airnow", noaa_coops: "noaa_coops" } as Record<string, string>)[key] ?? null, error: null, provenance: {}, coverage: {},
 }));
 
 export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; infrastructure: InfrastructureAsset[]; assessments: InfrastructureAssessment[]; layers: LayerCatalogItem[]; windowStart: string; windowEnd: string; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
   try {
     const [eventsResponse, sourcesResponse, infrastructureResponse, catalogResponse] = await Promise.all([
-      fetch(`${base}/events?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
+      fetch(`${base}/events?limit=1000`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/sources`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/infrastructure?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/sources/catalog`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
