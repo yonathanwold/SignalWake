@@ -19,6 +19,12 @@ export function FlaskIcon({ size = 16 }: IconProps) {
 export function HistoryIcon({ size = 16 }: IconProps) {
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 2.63-6.36L3 8.28M3 4v4.28h4.28M12 7v5l3.2 1.9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
+export function PlayIcon({ size = 16 }: IconProps) {
+  return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="m8 5 11 7-11 7V5Z" fill="currentColor"/></svg>;
+}
+export function PauseIcon({ size = 16 }: IconProps) {
+  return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="M7 5h3v14H7V5Zm7 0h3v14h-3V5Z" fill="currentColor"/></svg>;
+}
 export function LinkIcon({ size = 16 }: IconProps) {
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="M10.2 13.8a4 4 0 0 0 5.65.05l2.9-2.9a4 4 0 0 0-5.65-5.65L11.45 7M13.8 10.2a4 4 0 0 0-5.65-.05l-2.9 2.9a4 4 0 0 0 5.65 5.65l1.65-1.65" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>;
 }
@@ -40,4 +46,3 @@ export function AlertIcon({ size = 15 }: IconProps) {
 export function QuakeIcon({ size = 15 }: IconProps) {
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="m3 14 4-4 3 3 3-6 3 4 5-1" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 19h18" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>;
 }
-
