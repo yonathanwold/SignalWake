@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.base import AdapterError, NormalizedEvent, SourceAdapter, payload_hash
 from app.history import record_event_version, record_source_state
-from app.models import Event, ProcessingState, RawObservation, Source
+from app.models import Event, ProcessingState, RawObservation, Source, TransformationRun
 
 log = structlog.get_logger(__name__)
 
@@ -68,6 +69,18 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
     for adapter in source_adapters:
         attempted_at = datetime.now(timezone.utc)
         source = await ensure_source(session, adapter)
+        run = TransformationRun(
+            id=str(uuid.uuid4()),
+            run_kind="source_ingest",
+            version=adapter.adapter_version,
+            source_id=source.id,
+            started_at=attempted_at,
+            created_at=attempted_at,
+            status="running",
+        )
+        session.add(run)
+        await session.flush()
+        source.last_run_id = run.id
         source.last_attempt_at = attempted_at
         source.last_http_status = None
         try:
@@ -77,6 +90,15 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
             source.last_error = error
             source.last_http_status = adapter.last_http_status
             source.freshness_seconds = None
+            source.last_records_retrieved = 0
+            source.last_records_accepted = 0
+            source.last_records_rejected = 0
+            run.completed_at = datetime.now(timezone.utc)
+            run.status = "failed"
+            run.error = error
+            run.records_retrieved = 0
+            run.records_accepted = 0
+            run.records_rejected = 0
             await record_source_state(session, source, attempted_at)
             log.error(
                 "source_ingest_failed",
@@ -131,6 +153,14 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
         source.freshness_seconds = (
             max(0, int((attempted_at - latest_observed).total_seconds())) if latest_observed else 0
         )
+        source.last_records_retrieved = len(features)
+        source.last_records_accepted = normalized_count
+        source.last_records_rejected = skipped_count
+        run.completed_at = datetime.now(timezone.utc)
+        run.status = "completed"
+        run.records_retrieved = len(features)
+        run.records_accepted = normalized_count
+        run.records_rejected = skipped_count
         error = None
         if skipped_count:
             error = f"{skipped_count} malformed feature(s) skipped"

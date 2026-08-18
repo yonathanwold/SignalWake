@@ -30,7 +30,49 @@ class SourceResponse(BaseModel):
     last_error: str | None = None
     last_http_status: int | None = None
     freshness_seconds: int | None = None
+    expected_update_interval_seconds: int | None = None
+    last_run_id: str | None = None
+    last_records_retrieved: int | None = None
+    last_records_accepted: int | None = None
+    last_records_rejected: int | None = None
     health: str = "UNKNOWN"
+
+
+class LineageNode(BaseModel):
+    type: str
+    id: str
+    label: str
+    direct_or_derived: str
+    source: dict[str, Any] | None = None
+    observed_at: datetime | None = None
+    ingested_at: datetime | None = None
+    generated_at: datetime | None = None
+    transformation: dict[str, Any] | None = None
+    freshness_seconds: int | None = None
+    confidence: float | None = None
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class LineageEdge(BaseModel):
+    id: str
+    upstream: dict[str, str]
+    downstream: dict[str, str]
+    relation_kind: str
+    transformation_run_id: str | None = None
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    observed_at: datetime | None = None
+    ingested_at: datetime | None = None
+    generated_at: datetime | None = None
+
+
+class LineageResponse(BaseModel):
+    object_type: str
+    object_id: str
+    direction: str
+    limit: int
+    truncated: bool
+    nodes: list[LineageNode] = Field(default_factory=list)
+    edges: list[LineageEdge] = Field(default_factory=list)
 
 
 class EventResponse(BaseModel):

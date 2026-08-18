@@ -164,6 +164,11 @@ class Source(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     freshness_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expected_update_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    last_records_retrieved: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_records_accepted: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_records_rejected: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     raw_observations: Mapped[list[RawObservation]] = relationship(back_populates="source")
     events: Mapped[list[Event]] = relationship(back_populates="source")
@@ -184,6 +189,11 @@ class InfrastructureSource(Base):
     last_import_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_import_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_import_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected_update_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    last_records_retrieved: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_records_accepted: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_records_rejected: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     raw_records: Mapped[list[RawInfrastructureRecord]] = relationship(back_populates="source")
     assets: Mapped[list[InfrastructureAsset]] = relationship(back_populates="source")
@@ -611,3 +621,60 @@ class ScenarioResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     run: Mapped[ScenarioRun] = relationship(back_populates="result")
+
+
+class TransformationRun(Base):
+    """Bounded metadata for one ingest/import/derivation/assessment run.
+
+    ``source_id`` is intentionally a string without a foreign key because the
+    source namespace includes both event and infrastructure sources.  This
+    table records operational facts only; it is not an event-sourcing log.
+    """
+
+    __tablename__ = "transformation_runs"
+    __table_args__ = (
+        Index("ix_transformation_run_kind_started", "run_kind", "started_at"),
+        Index("ix_transformation_run_source_started", "source_id", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_kind: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[str] = mapped_column(String(64))
+    source_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="completed")
+    records_retrieved: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    records_accepted: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    records_rejected: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LineageRecord(Base):
+    """Explicit bounded dependency edge between persisted SIGNALWAKE objects."""
+
+    __tablename__ = "lineage_records"
+    __table_args__ = (
+        Index("ix_lineage_upstream", "upstream_type", "upstream_id"),
+        Index("ix_lineage_downstream", "downstream_type", "downstream_id"),
+        Index("ix_lineage_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    upstream_type: Mapped[str] = mapped_column(String(64), index=True)
+    upstream_id: Mapped[str] = mapped_column(String(512), index=True)
+    downstream_type: Mapped[str] = mapped_column(String(64), index=True)
+    downstream_id: Mapped[str] = mapped_column(String(512), index=True)
+    relation_kind: Mapped[str] = mapped_column(String(64))
+    transformation_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("transformation_runs.id"), nullable=True, index=True
+    )
+    evidence_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    transformation_run: Mapped[TransformationRun | None] = relationship()

@@ -9,6 +9,7 @@ assessment projection over those inputs.
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -26,6 +27,7 @@ from app.models import (
     InfrastructureAssessment,
     InfrastructureAsset,
     InfrastructureRelationship,
+    TransformationRun,
 )
 from app.schemas import AssessmentResponse
 from app.spatial import distance_geometry_to_point_km, geometry_intersects, validate_geometry
@@ -489,6 +491,21 @@ async def recompute_event_assessments(
         .scalars()
         .all()
     )
+    run = TransformationRun(
+        id=str(uuid.uuid4()),
+        run_kind="assessment",
+        version=METHODOLOGY_VERSION,
+        source_id=event.source_id,
+        started_at=now,
+        completed_at=now,
+        created_at=now,
+        status="completed",
+        records_retrieved=len(assets),
+        records_accepted=len(desired),
+        records_rejected=deleted_count,
+        metadata_json=json.dumps({"event_id": event.id, "radius_km": radius_km, "depth": depth, "asset_limit": asset_limit}, sort_keys=True),
+    )
+    session.add(run)
     return AssessmentRecomputeResult(
         event_id=event.id,
         methodology_version=METHODOLOGY_VERSION,

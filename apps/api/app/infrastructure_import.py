@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,7 @@ from app.models import (
     InfrastructureSource,
     ProcessingState,
     RawInfrastructureRecord,
+    TransformationRun,
 )
 from app.spatial import GeometryValidationError, geometry_centroid, validate_geometry
 
@@ -236,6 +238,18 @@ async def import_payload(
         raise ValueError("batch_size must be between 1 and 5000")
     fetched_at = fetched_at or datetime.now(timezone.utc)
     source = await ensure_infrastructure_source(session, source_key, endpoint=endpoint)
+    run = TransformationRun(
+        id=str(uuid.uuid4()),
+        run_kind="infrastructure_import",
+        version=source.adapter_version,
+        source_id=source.id,
+        started_at=fetched_at,
+        created_at=fetched_at,
+        status="running",
+    )
+    session.add(run)
+    await session.flush()
+    source.last_run_id = run.id
     features = _feature_list(payload)
     inserted_count = updated_count = skipped_count = duplicate_count = 0
     processed = 0
@@ -340,6 +354,15 @@ async def import_payload(
     source.last_import_at = fetched_at
     source.last_import_count = processed
     source.last_import_error = f"{skipped_count} malformed record(s) skipped" if skipped_count else None
+    source.last_records_retrieved = len(features)
+    source.last_records_accepted = processed
+    source.last_records_rejected = skipped_count
+    run.completed_at = datetime.now(timezone.utc)
+    run.status = "completed"
+    run.records_retrieved = len(features)
+    run.records_accepted = processed
+    run.records_rejected = skipped_count
+    run.error = source.last_import_error
     await record_infrastructure_source_state(session, source, fetched_at)
     await session.commit()
     return InfrastructureImportStats(

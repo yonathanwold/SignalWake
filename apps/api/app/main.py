@@ -34,6 +34,7 @@ from app.graph_repository import (
 from app.ingest import ensure_source, ingest_once, persist_normalized
 from app.logging import configure_logging
 from app.models import Event, InfrastructureRelationshipType, Scenario, Source
+from app.provenance import lineage as build_lineage
 from app.replay import replay_compare as build_replay_compare
 from app.replay import replay_state as build_replay_state
 from app.replay import replay_timeline as build_replay_timeline
@@ -71,6 +72,7 @@ from app.schemas import (
     HealthResponse,
     InfrastructureListResponse,
     InfrastructureResponse,
+    LineageResponse,
     ReplayCompareResponse,
     ReplayStateResponse,
     ReplayTimelineResponse,
@@ -209,6 +211,56 @@ async def health(session: AsyncSession = Depends(session_dependency)) -> HealthR
 async def sources(session: AsyncSession = Depends(session_dependency)) -> list[SourceResponse]:
     result = await session.execute(select(Source).order_by(Source.key))
     return [source_response(item) for item in result.scalars().all()]
+
+
+@app.get("/provenance/lineage", response_model=LineageResponse, tags=["provenance"])
+async def provenance_lineage(
+    object_type: str = Query(..., description="event, raw_observation, asset, raw_infrastructure_record, relationship, assessment, scenario, scenario_run, or source"),
+    object_id: str = Query(...),
+    direction: str = Query("both"),
+    limit: int = Query(50, ge=1, le=200),
+    at: datetime | None = Query(None, description="Optional UTC knowledge-time boundary"),
+    session: AsyncSession = Depends(session_dependency),
+) -> LineageResponse:
+    try:
+        result = await build_lineage(
+            session,
+            object_type=object_type,
+            object_id=object_id,
+            direction=direction,
+            limit=limit,
+            at=at,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return LineageResponse.model_validate(result)
+
+
+@app.get("/provenance/{object_type}/{object_id}", response_model=LineageResponse, tags=["provenance"])
+async def provenance_alias(
+    object_type: str,
+    object_id: str,
+    direction: str = Query("both"),
+    limit: int = Query(50, ge=1, le=200),
+    at: datetime | None = Query(None),
+    session: AsyncSession = Depends(session_dependency),
+) -> LineageResponse:
+    try:
+        result = await build_lineage(
+            session,
+            object_type=object_type,
+            object_id=object_id,
+            direction=direction,
+            limit=limit,
+            at=at,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return LineageResponse.model_validate(result)
 
 
 @app.get("/replay/timeline", response_model=ReplayTimelineResponse, tags=["replay"])

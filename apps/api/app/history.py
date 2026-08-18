@@ -102,6 +102,11 @@ def source_snapshot(source: Source) -> dict[str, Any]:
         "last_error": source.last_error,
         "last_http_status": source.last_http_status,
         "freshness_seconds": source.freshness_seconds,
+        "expected_update_interval_seconds": source.expected_update_interval_seconds,
+        "last_run_id": source.last_run_id,
+        "last_records_retrieved": source.last_records_retrieved,
+        "last_records_accepted": source.last_records_accepted,
+        "last_records_rejected": source.last_records_rejected,
     }
 
 

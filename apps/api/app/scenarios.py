@@ -31,6 +31,7 @@ from app.models import (
     ScenarioTarget,
     ScenarioTargetKind,
     ScenarioType,
+    TransformationRun,
 )
 
 METHODOLOGY_VERSION = "second-order-v1"
@@ -595,6 +596,21 @@ async def execute_scenario(session: AsyncSession, scenario_id: str) -> ScenarioR
         created_at=now,
     )
     session.add(run)
+    session.add(
+        TransformationRun(
+            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"signalwake:scenario-transformation:{run_key}")),
+            run_kind="scenario",
+            version=METHODOLOGY_VERSION,
+            started_at=now,
+            completed_at=now,
+            created_at=now,
+            status="completed",
+            records_retrieved=execution.baseline["node_count"],
+            records_accepted=execution.modified["node_count"],
+            records_rejected=0,
+            metadata_json={"scenario_id": scenario.id, "run_id": run.id},
+        )
+    )
     await session.flush()
     await session.refresh(run, ["result"])
     return run

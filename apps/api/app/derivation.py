@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from app.models import (
     InfrastructureRelationshipSource,
     InfrastructureRelationshipType,
     RelationshipDirectionality,
+    TransformationRun,
 )
 from app.spatial import (
     distance_geometry_to_point_km,
@@ -343,6 +345,20 @@ async def rebuild_derived_relationships(
             for key, value in values.items():
                 setattr(current, key, value)
             updated_count += 1
+    run = TransformationRun(
+        id=str(uuid.uuid4()),
+        run_kind="relationship_derivation",
+        version=settings.version,
+        started_at=now,
+        completed_at=now,
+        created_at=now,
+        status="completed",
+        records_retrieved=len(assets),
+        records_accepted=len(desired),
+        records_rejected=0,
+        metadata_json=json.dumps({"candidate_pairs": candidate_count, "deleted_count": deleted_count}, sort_keys=True),
+    )
+    session.add(run)
     await session.commit()
     return RebuildStats(
         assets_considered=len(assets),
