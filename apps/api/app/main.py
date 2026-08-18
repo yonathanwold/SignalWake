@@ -9,6 +9,7 @@ import structlog
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -401,6 +402,9 @@ async def assessments_recompute(
             asset_limit=request.asset_limit,
         )
         await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Scenario conflicts with an existing persisted definition") from exc
     except LookupError as exc:
         await session.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -679,6 +683,9 @@ async def scenarios_create(
         )
         await session.commit()
         await session.refresh(scenario, ["targets"])
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Scenario run conflicts with an existing persisted run") from exc
     except LookupError as exc:
         await session.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
