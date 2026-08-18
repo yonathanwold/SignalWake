@@ -50,6 +50,13 @@ event/asset views are under `/assessments`, `/events/{id}/assessments`, and
 selected event and methodology version. Scenario Lab is a separate Phase 5
 projection and does not rewrite this assessment layer.
 
+Historical Replay is Phase 6. Version tables preserve event, imported asset,
+assessment, and source state snapshots at knowledge time while the current
+tables continue serving live endpoints. Replay requires timezone-aware UTC
+boundaries and distinguishes source event time from ingestion/generation
+time; late observations are intentionally invisible before their recorded
+time. See [`docs/replay.md`](replay.md) for endpoint bounds and semantics.
+
 ## Scenario Lab
 
 Scenario definitions and runs live in `app/scenarios.py` and the

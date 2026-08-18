@@ -122,6 +122,28 @@ paths, alternate-route checks, and Tarjan articulation points. The
 outage, service, economic, logistical, or causal prediction. Full assumptions,
 formula, safe bounds, and reproducibility rules are in `docs/scenarios.md`.
 
+Phase 6 adds bounded Historical Replay without replacing the current live
+projections:
+
+```text
+Event / asset / assessment / source writes
+    | append-only knowledge-time snapshots
+    v
+event_versions / infrastructure_asset_versions /
+infrastructure_assessment_versions / source_state_versions
+    | deterministic as-of selection at inclusive UTC boundary T
+    v
+/replay/timeline · /replay/state · /replay/compare
+    v
+Historical Replay scrubber, map, selected event, and A/B changes
+```
+
+Replay keeps source event time separate from knowledge/ingestion time. A late
+observation is absent before it was recorded even if its observed time is
+older; an event expires according to its validity timestamps only after its
+version is known. The full semantics, bounds, UTC validation, and limitations
+are in [`docs/replay.md`](replay.md).
+
 Current node types are `port` (BTS Port Facilities) and `rail_corridor` (FRA
 Rail Lines). Current relationship types are:
 
@@ -166,6 +188,11 @@ rows, deterministic run keys, and baseline/modified result snapshots. Scenario
 tables are a derived projection and do not own or mutate infrastructure facts
 or persisted graph relationships.
 
+`006_historical_replay.sql` stores append-only event, asset, assessment, and
+source snapshots. `valid_to` is a convenience validity interval for version
+inspection; replay selection is controlled by recorded/generated knowledge
+time and never by the mutable current projection.
+
 ## API contract
 
 - `GET /health` — service, database, and source freshness status.
@@ -191,6 +218,9 @@ or persisted graph relationships.
 - `POST /scenarios/{id}/runs` — explicit deterministic in-memory graph mutation and persisted result; repeated calls are idempotent for the same input/baseline/methodology.
 - `GET /scenario-runs/{id}`, `GET /scenario-runs/{id}/result` — run evidence, metrics, hashes, and formula components.
 - `GET /scenario-runs/{id}/graph?state=baseline|modified` — bounded graph snapshot for visualization.
+- `GET /replay/timeline` — bounded deterministic knowledge-time change markers.
+- `GET /replay/state` — bounded UTC as-of projection with event/knowledge-time fields.
+- `GET /replay/compare` — bounded A/B change lists between two knowledge boundaries.
 
 The browser's map markers and feed rows are both projections of the same `Event` response. Infrastructure layers and the reference inspector are projections of `/infrastructure`; the browser does not ship a full static dataset. MapLibre uses separate GeoJSON sources for events and infrastructure. The SVG renderer remains a fallback.
 
