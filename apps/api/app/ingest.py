@@ -147,7 +147,7 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
                     "source_feature_skipped",
                     source=adapter.key,
                     index=index,
-                    error=str(exc),
+                    error=bounded_text(exc),
                 )
                 continue
             normalized_count += 1

@@ -16,8 +16,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -e ".[dev]"
-      - run: ruff check .
-      - run: pytest
+      - run: ruff check app tests
+      # Phase 9 hardening files are format-gated; older Phase 1-8 modules
+      # remain intentionally untouched until their own formatting change.
+      - run: ruff format --check app/config.py tests/test_hardening.py tests/test_migrations.py
+      - run: pytest -q
+      - run: python ../../scripts/validate_migrations.py
 
   web:
     runs-on: ubuntu-latest
@@ -36,3 +40,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f infra/docker-compose.yml config

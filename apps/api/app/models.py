@@ -280,6 +280,8 @@ class InfrastructureRelationship(Base):
         UniqueConstraint("relationship_key", name="uq_infrastructure_relationship_key"),
         Index("ix_infrastructure_relationship_from", "from_asset_id"),
         Index("ix_infrastructure_relationship_to", "to_asset_id"),
+        Index("ix_infrastructure_relationship_from_type", "from_asset_id", "relationship_type"),
+        Index("ix_infrastructure_relationship_to_type", "to_asset_id", "relationship_type"),
         Index("ix_infrastructure_relationship_type_source", "relationship_type", "relationship_source"),
         Index("ix_infrastructure_relationship_derived", "relationship_source", "updated_at"),
     )
@@ -334,6 +336,7 @@ class Event(Base):
     __table_args__ = (
         UniqueConstraint("source_id", "source_event_id", name="uq_event_source_record"),
         Index("ix_event_time", "observed_at"),
+        Index("ix_event_observed_id", "observed_at", "id"),
         Index("ix_event_filters", "source_id", "event_type", "severity", "observed_at"),
     )
 
@@ -376,7 +379,9 @@ class InfrastructureAssessment(Base):
     __table_args__ = (
         UniqueConstraint("assessment_key", name="uq_infrastructure_assessment_key"),
         Index("ix_assessment_event_type", "event_id", "assessment_type"),
+        Index("ix_assessment_event_score", "event_id", "score"),
         Index("ix_assessment_asset", "affected_asset_id"),
+        Index("ix_assessment_asset_score", "affected_asset_id", "score"),
         Index("ix_assessment_status_score", "status", "score"),
         Index("ix_assessment_methodology", "event_id", "methodology_version"),
     )

@@ -31,6 +31,11 @@ type CompareResult = {
 const MAX_LIMIT = 100;
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
+// These values are used only for the hydration-safe initial state. The replay
+// window is replaced with the current UTC clock in the client effect below
+// before any controls or API-backed state are rendered.
+const INITIAL_REPLAY_END = Date.UTC(2026, 7, 17);
+const INITIAL_REPLAY_START = INITIAL_REPLAY_END - 7 * DAY;
 
 function apiBase() {
   return process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -56,10 +61,10 @@ function stateEvents(value: ReplayState | null) {
 }
 
 export function ReplayWorkspace() {
-  const now = Date.now();
-  const [rangeStart] = useState(now - 7 * DAY);
-  const [rangeEnd] = useState(now);
-  const [at, setAt] = useState(now);
+  const [clockReady, setClockReady] = useState(false);
+  const [rangeStart, setRangeStart] = useState(INITIAL_REPLAY_START);
+  const [rangeEnd, setRangeEnd] = useState(INITIAL_REPLAY_END);
+  const [at, setAt] = useState(INITIAL_REPLAY_END);
   const [timeline, setTimeline] = useState<TimelineMarker[]>([]);
   const [state, setState] = useState<ReplayState | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "empty" | "error">("loading");
@@ -67,11 +72,21 @@ export function ReplayWorkspace() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [compareFrom, setCompareFrom] = useState(now - DAY);
-  const [compareTo, setCompareTo] = useState(now);
+  const [compareFrom, setCompareFrom] = useState(INITIAL_REPLAY_END - DAY);
+  const [compareTo, setCompareTo] = useState(INITIAL_REPLAY_END);
   const [compare, setCompare] = useState<CompareResult | null>(null);
   const [compareStatus, setCompareStatus] = useState<"idle" | "loading" | "ready" | "empty">("idle");
   const [refreshNonce, setRefreshNonce] = useState(0);
+
+  useEffect(() => {
+    const end = Date.now();
+    setRangeStart(end - 7 * DAY);
+    setRangeEnd(end);
+    setAt(end);
+    setCompareFrom(end - DAY);
+    setCompareTo(end);
+    setClockReady(true);
+  }, []);
 
   const loadState = useCallback(async (timestamp: number, signal?: AbortSignal) => {
     const response = await fetch(`${apiBase()}/replay/state?at=${encodeURIComponent(iso(timestamp))}&limit=${MAX_LIMIT}`, { cache: "no-store", signal });
@@ -86,14 +101,16 @@ export function ReplayWorkspace() {
   }, []);
 
   useEffect(() => {
+    if (!clockReady) return;
     const controller = new AbortController();
     void loadTimeline(rangeStart, rangeEnd, controller.signal)
       .then((timelineBody) => { if (!controller.signal.aborted) setTimeline(timelineBody.items); })
       .catch(() => { if (!controller.signal.aborted) setTimeline([]); });
     return () => controller.abort();
-  }, [rangeEnd, rangeStart, loadTimeline]);
+  }, [clockReady, rangeEnd, rangeStart, loadTimeline]);
 
   useEffect(() => {
+    if (!clockReady) return;
     const controller = new AbortController();
     setStatus("loading");
     setError(null);
@@ -110,10 +127,10 @@ export function ReplayWorkspace() {
         setError(reason instanceof Error ? reason.message : "Historical replay is unavailable");
       });
     return () => controller.abort();
-  }, [at, loadState, refreshNonce]);
+  }, [at, clockReady, loadState, refreshNonce]);
 
   useEffect(() => {
-    if (!playing) return;
+    if (!clockReady || !playing) return;
     const interval = window.setInterval(() => {
       setAt((current) => {
         const next = Math.min(rangeEnd, current + 15 * 60 * 1000 * speed);
@@ -122,7 +139,7 @@ export function ReplayWorkspace() {
       });
     }, 650);
     return () => window.clearInterval(interval);
-  }, [playing, rangeEnd, speed]);
+  }, [clockReady, playing, rangeEnd, speed]);
 
   const selectedEvent = useMemo(() => state?.events.find((event) => event.id === selectedEventId) ?? null, [selectedEventId, state]);
   const markersAt = useMemo(() => timeline.filter((marker) => Date.parse(marker.timestamp) <= at), [at, timeline]);
@@ -149,6 +166,10 @@ export function ReplayWorkspace() {
     ["NEW ASSESSMENTS", compare.changes.new_assessments ?? [], "new_assessments"],
     ["NEWLY EXPOSED INFRASTRUCTURE", compare.changes.newly_exposed_infrastructure ?? [], "newly_exposed_infrastructure"],
   ] as const : [];
+
+  if (!clockReady) {
+    return <div className="replay-page" aria-busy="true"><div className="replay-empty" role="status" aria-live="polite"><HistoryIcon size={18} /><strong>PREPARING UTC REPLAY</strong><span>Initializing the current replay window before loading historical state.</span></div></div>;
+  }
 
   return <div className="replay-page">
     <div className="replay-intro">

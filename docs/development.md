@@ -8,6 +8,8 @@
 - `apps/web/components` — shared map, feed, shell, graph, and Scenario Lab UI.
 - `apps/web/lib` — canonical frontend types and API/demo data access.
 - `infra/docker-compose.yml` — Postgres/PostGIS target service.
+- `docs/release-hardening.md` — Phase 9 bounds, security assumptions, release
+  checks, and deployment prerequisites.
 
 ## Data classification
 
@@ -124,11 +126,16 @@ coverage and conclusions depend on the imported source records.
 cd apps/api
 python -m pytest -q
 python -m ruff check app tests
+python -m ruff format --check app/config.py tests/test_hardening.py tests/test_migrations.py
+python ..\..\scripts\validate_migrations.py
 
 cd ..\web
 npm.cmd run lint
 npm.cmd run typecheck
 npm.cmd run build
+
+cd ..\..
+docker compose -f infra/docker-compose.yml config
 ```
 
 Graph tests cover exact small-graph traversals, components, shortest paths,
@@ -142,3 +149,29 @@ component formula/version math, null confidence, relationship evidence,
 bounded graph traversal, idempotent recompute/stale cleanup, and API filter,
 detail, and validation behavior. Tests never call NWS, USGS, or public
 infrastructure URLs.
+
+## Phase 9 security and performance notes
+
+Set `CORS_ORIGINS` and `CORS_ALLOW_CREDENTIALS` explicitly for a deployment;
+the validator refuses wildcard origins with credentials. The API middleware
+returns a bounded correlation ID and browser safety headers, but it does not
+provide authentication or TLS. Put the API behind an authenticated,
+TLS-terminating proxy for shared use.
+
+Infrastructure URL imports validate public DNS/IP targets again after each
+redirect, disable automatic redirects, cap the response at 10 MiB and 100,000
+features, and keep local fixture imports working. Never use the importer for
+an untrusted URL without reviewing the source and expected dataset size.
+Proxy environment variables are ignored. Hostnames are re-resolved and
+rechecked at redirect boundaries; pinned DNS/egress controls are still needed
+for complete DNS-rebinding protection.
+
+Database-side relationship scoping and Phase 9 indexes reduce avoidable full
+relationship scans, but the graph is still materialized in memory per bounded
+request. Graph edge pages use one window-count query (with a fallback only for
+out-of-range empty pages), and no broad cache was added. Use PostGIS for real
+spatial scale; SQLite is for deterministic tests and demos.
+Compose accepts a complete `DATABASE_URL` override. Percent-encode URI
+delimiters in username/password components; the default local URL intentionally
+uses simple credentials and should not be treated as a production secret
+management mechanism.

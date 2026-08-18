@@ -8,7 +8,7 @@ The first slice is intentionally honest about its boundary:
 - `DEMO` means deterministic fixture data used only when startup ingestion is disabled, a source has no usable live events, or the browser cannot reach the API.
 - `DERIVED` means normalized event fields such as severity and type; it does not mean an infrastructure impact prediction.
 - `REFERENCE` means an imported infrastructure asset whose geometry and metadata came from a named public source. It is intentionally separate from live event observations.
-- Infrastructure Graph is a bounded, API-backed workspace over persisted Phase 3 relationships. Scenario Lab is a separate second-order graph comparison surface; Historical Replay, Source Provenance, and System Health remain routed shells for later milestones.
+- Infrastructure Graph is a bounded, API-backed workspace over persisted Phase 3 relationships. Scenario Lab is a separate second-order graph comparison surface. Historical Replay, Source Provenance, and System Health are implemented API-backed workspaces over their persisted/versioned data; they show honest empty/error states when the API or data is unavailable.
 - Phase 4 assessments are a separate `SIGNALWAKE DERIVED ASSESSMENT` layer. They correlate an event with source-provided infrastructure using deterministic geometry predicates, bounded radius checks, and bounded structural graph traversal. They are exposure-prioritization scores, not outage, economic-loss, causal, or operational dependency predictions.
 - The Operational Map uses MapLibre GL JS with local, token-free GeoJSON rendering for the same canonical events as the feed; its SVG surface is an explicit runtime fallback only if MapLibre initialization fails.
 
@@ -105,8 +105,29 @@ cd ..\web
 npm.cmd run lint
 npm.cmd run typecheck
 npm.cmd run build
+
+cd ..\..
+python scripts/validate_migrations.py
+docker compose -f infra/docker-compose.yml config
 ```
 
-Docker Compose describes the production-shaped Postgres/PostGIS service, but local verification does not require Docker. SQLite is used only for deterministic tests and demo development; the production migration keeps geography in PostGIS geometry columns with GiST indexes.
+Docker Compose provides a local PostGIS service and an optional `app` profile for
+the non-root API/web images:
+
+```powershell
+docker compose -f infra/docker-compose.yml up -d postgres
+docker compose -f infra/docker-compose.yml --profile app up --build
+```
+
+Credentials and loopback ports are parameterized through environment variables;
+set a complete `DATABASE_URL` override with percent-encoded username/password
+components when credentials contain URI delimiters.
+The defaults are for local development only. Docker/PostGIS is not a hosted
+deployment, and no deployment URL is implied. SQLite remains the deterministic
+test/demo path; production migration `009_query_bounds.sql` adds indexes for
+bounded event, relationship, and assessment query shapes.
+
+Security assumptions, request bounds, SSRF protections, release checks, and
+known deployment limitations are in [docs/release-hardening.md](docs/release-hardening.md).
 
 See [docs/architecture.md](docs/architecture.md), [docs/development.md](docs/development.md), and [docs/data-sources.md](docs/data-sources.md).

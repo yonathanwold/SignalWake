@@ -299,6 +299,32 @@ The `/provenance` browser workspace is a focused flow rather than an admin
 table. Event, asset, graph relationship, assessment, and replay inspectors
 link to a concrete lineage focus. The workspace has no demo lineage fallback:
 an unavailable API or missing object is shown as an explicit empty/error state.
+
+## Phase 9 production hardening
+
+The deployed-shaped request path is still intentionally small:
+
+```text
+Browser -> loopback/reverse proxy -> FastAPI security middleware
+        -> bounded SQL/PostGIS repository queries -> typed response
+                                     \\- process-local metrics + persisted runs
+```
+
+CORS origins and credentials are settings-driven and wildcard/credential
+combinations are rejected. API responses carry correlation and browser safety
+headers. Caller-supplied infrastructure URLs use HTTP(S) only, reject private
+or metadata destinations at every redirect hop, and enforce redirect, timeout,
+body-size, and feature-count limits. Local fixture imports do not use that
+network path.
+
+Graph relationship endpoint scoping is applied in SQL for selected asset IDs;
+the request-local graph engine memoizes repeated structural metrics so a list
+response does not rerun Brandes/Tarjan calculations for each node. Migration
+009 adds only indexes matching event/relationship/assessment ordering and
+lookup shapes. No live PostGIS benchmark or `EXPLAIN` result is implied by the
+index definitions. Container files are production-shaped, non-root, and
+credential-free, while Compose remains a local prerequisite description rather
+than a hosted deployment.
 # System health
 
 Runtime health is documented in [system-health.md](system-health.md). The API

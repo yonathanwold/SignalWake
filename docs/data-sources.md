@@ -48,6 +48,17 @@ The source URLs above are authoritative landing pages. The importer accepts a do
 
 Every asset retains its source key and stable source record ID, source URL/name, attribution, license note, fetch time, adapter version, payload hash, and raw record ID. Changed source payloads update the canonical asset by `(source_id, source_asset_id)`; repeated payloads do not create duplicate raw or asset rows. `source_updated_at` is null when the source does not supply an update value. Reference data has no live freshness health badge because it is a caller-triggered batch import.
 
+### Import safety boundary
+
+The `--file` path is the recommended deterministic/demo path. For `--url`, the
+importer requires HTTP(S), resolves and rejects localhost/private/link-local/
+reserved/metadata targets, validates each redirect hop, allows at most three
+redirects, and bounds the response to 10 MiB and 100,000 features. Timeout is
+bounded to 120 seconds. These controls reduce SSRF and accidental giant
+downloads; they do not verify that a public dataset is trustworthy or licensed.
+Operator errors are sanitized and raw source records are retained only for the
+documented provenance contract.
+
 ## Graph relationships and provenance
 
 The graph uses only the imported BTS port points and FRA rail LineStrings. It

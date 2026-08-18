@@ -68,3 +68,15 @@ The process-local registry is intentionally not a durable audit log. For
 long-term alerting or fleet-wide aggregation, add an actual deployment need
 and a retained backend rather than inferring enterprise metrics from this
 bounded view.
+
+## Response and deployment safety
+
+`CORS_ORIGINS` is a comma-separated allowlist and `CORS_ALLOW_CREDENTIALS`
+controls credentialed browser requests; wildcard plus credentials is rejected
+at settings load time. Every successful API response includes `X-Request-ID`,
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Referrer-Policy: no-referrer`, a restrictive `Permissions-Policy`, and
+`Cache-Control: no-store`. These headers and local Compose health checks do not
+constitute authentication, TLS, or durable monitoring. See
+[`release-hardening.md`](release-hardening.md) for the complete release
+boundary.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -49,11 +49,19 @@ async def load_graph_context(
         relationship_statement = relationship_statement.where(
             InfrastructureRelationship.relationship_type.in_(relationship_types)
         )
-    relationships = [
-        relationship
-        for relationship in (await session.execute(relationship_statement)).scalars().all()
-        if relationship.from_asset_id in asset_id_set and relationship.to_asset_id in asset_id_set
-    ]
+    # Scope both relationship endpoints in SQL.  This avoids loading every
+    # relationship row only to discard edges in Python for filtered graph
+    # requests (neighbors, subgraphs, and node detail).
+    if asset_id_set:
+        relationship_statement = relationship_statement.where(
+            and_(
+                InfrastructureRelationship.from_asset_id.in_(asset_id_set),
+                InfrastructureRelationship.to_asset_id.in_(asset_id_set),
+            )
+        )
+    else:
+        relationship_statement = relationship_statement.where(False)
+    relationships = list((await session.execute(relationship_statement)).scalars().all())
     nodes = [
         GraphNode(
             id=asset.id,
@@ -138,3 +146,38 @@ def edge_between(engine: GraphEngine, node_ids: set[str]) -> list[GraphEdgeRespo
 
 def assets_by_id(assets: Iterable[InfrastructureAsset]) -> dict[str, InfrastructureAsset]:
     return {asset.id: asset for asset in assets}
+
+
+async def list_relationship_edges(
+    session: AsyncSession,
+    *,
+    relationship_types: set[str] | None = None,
+    limit: int = 100,
+    cursor: int = 0,
+) -> tuple[list[GraphEdge], int, int | None]:
+    """Return a bounded relationship page without materializing a graph."""
+
+    total_column = func.count(InfrastructureRelationship.id).over().label("_total_count")
+    statement = select(InfrastructureRelationship, total_column).order_by(
+        InfrastructureRelationship.relationship_type,
+        InfrastructureRelationship.from_asset_id,
+        InfrastructureRelationship.to_asset_id,
+        InfrastructureRelationship.id,
+    )
+    count_statement = select(func.count(InfrastructureRelationship.id))
+    if relationship_types:
+        predicate = InfrastructureRelationship.relationship_type.in_(relationship_types)
+        statement = statement.where(predicate)
+        count_statement = count_statement.where(predicate)
+    result = await session.execute(statement.offset(cursor).limit(limit + 1))
+    rows = list(result.all())
+    # Window counts keep page and total in one snapshot. An out-of-range page
+    # has no window row, so use one bounded fallback count to preserve the
+    # previous total contract for that edge case.
+    total = (
+        int(rows[0][1])
+        if rows
+        else int((await session.execute(count_statement)).scalar_one())
+    )
+    next_cursor = cursor + limit if len(rows) > limit else None
+    return [_graph_edge(row[0]) for row in rows[:limit]], total, next_cursor

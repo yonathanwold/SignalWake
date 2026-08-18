@@ -2,19 +2,59 @@ services:
   postgres:
     image: postgis/postgis:16-3.4
     environment:
-      POSTGRES_DB: signalwake
-      POSTGRES_USER: signalwake
-      POSTGRES_PASSWORD: signalwake-local-only
+      POSTGRES_DB: ${POSTGRES_DB:-signalwake}
+      POSTGRES_USER: ${POSTGRES_USER:-signalwake}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-signalwake-local-only}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - signalwake-postgres:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/001-postgis.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U signalwake -d signalwake"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
 
+  api:
+    profiles: ["app"]
+    build:
+      context: ../apps/api
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      # Set DATABASE_URL to a complete URL when credentials contain URI
+      # delimiters; encode user/password components before putting them here.
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://signalwake:signalwake-local-only@postgres:5432/signalwake}
+      INGEST_ON_STARTUP: ${INGEST_ON_STARTUP:-false}
+      USE_DEMO_DATA: ${USE_DEMO_DATA:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-true}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    profiles: ["app"]
+    build:
+      context: ../apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   signalwake-postgres:
-

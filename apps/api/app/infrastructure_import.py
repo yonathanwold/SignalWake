@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
+import socket
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from sqlalchemy import select, text
@@ -25,6 +28,11 @@ from app.observability import bounded_text
 from app.spatial import GeometryValidationError, geometry_centroid, validate_geometry
 
 log = logging.getLogger(__name__)
+
+MAX_IMPORT_BYTES = 10 * 1024 * 1024
+MAX_IMPORT_FEATURES = 100_000
+MAX_REDIRECTS = 3
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 SOURCE_DEFINITIONS: dict[str, dict[str, str]] = {
     "bts_ports": {
@@ -163,24 +171,144 @@ def normalize_feature(feature: dict[str, Any], source_key: str) -> dict[str, Any
 
 def _feature_list(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
-        return payload
-    if not isinstance(payload, dict):
+        features = payload
+    elif not isinstance(payload, dict):
         raise ValueError("infrastructure payload must be a JSON object or feature list")
-    features = payload.get("features")
-    if not isinstance(features, list):
-        raise ValueError("infrastructure payload must contain a features list")
+    else:
+        features = payload.get("features")
+        if not isinstance(features, list):
+            raise ValueError("infrastructure payload must contain a features list")
+    if len(features) > MAX_IMPORT_FEATURES:
+        raise ValueError(f"infrastructure payload exceeds {MAX_IMPORT_FEATURES} features")
     return features
+
+
+def _public_ip_addresses(hostname: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Resolve a hostname and reject loopback/private/reserved destinations.
+
+    Resolution is repeated for every redirect hop.  This is intentionally
+    conservative for an operator-triggered importer: a DNS failure is safer
+    than guessing where a caller-supplied host points.
+    """
+
+    try:
+        addresses = {
+            ipaddress.ip_address(result[4][0])
+            for result in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+        }
+    except (OSError, ValueError) as exc:
+        raise ValueError("remote host could not be resolved") from exc
+    if not addresses:
+        raise ValueError("remote host has no usable address")
+    for address in addresses:
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+            or address.is_unspecified
+            or str(address) == "169.254.169.254"
+        ):
+            raise ValueError("remote host resolves to a private or reserved address")
+    return sorted(addresses, key=str)
+
+
+def _validate_remote_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("infrastructure URL must use http or https")
+    if parsed.username or parsed.password or not parsed.hostname:
+        raise ValueError("infrastructure URL must contain a public hostname without credentials")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname in {"localhost", "metadata.google.internal", "metadata"} or hostname.endswith(
+        (".localhost", ".local")
+    ):
+        raise ValueError("infrastructure URL hostname is not allowed")
+    try:
+        literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        _public_ip_addresses(hostname)
+    else:
+        if (
+            literal.is_private
+            or literal.is_loopback
+            or literal.is_link_local
+            or literal.is_reserved
+            or literal.is_multicast
+            or literal.is_unspecified
+            or str(literal) == "169.254.169.254"
+        ):
+            raise ValueError("infrastructure URL target address is not allowed")
+    return value
+
+
+async def _read_remote_json(client: httpx.AsyncClient, url: str) -> Any:
+    current = _validate_remote_url(url)
+    for hop in range(MAX_REDIRECTS + 1):
+        async with client.stream("GET", current) as response:
+            if response.status_code in _REDIRECT_STATUSES:
+                location = response.headers.get("location")
+                if not location:
+                    raise ValueError("remote response redirect did not provide a location")
+                if hop >= MAX_REDIRECTS:
+                    raise ValueError("remote response exceeded the redirect limit")
+                current = _validate_remote_url(urljoin(current, location))
+                continue
+            try:
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise ValueError(f"remote request failed with HTTP {response.status_code}") from exc
+            content_length = response.headers.get("content-length")
+            if content_length:
+                try:
+                    declared_size = int(content_length)
+                    if declared_size < 0:
+                        raise ValueError("remote response has an invalid content length")
+                    if declared_size > MAX_IMPORT_BYTES:
+                        raise ValueError(f"remote response exceeds {MAX_IMPORT_BYTES} bytes")
+                except ValueError as exc:
+                    if "exceeds" in str(exc):
+                        raise
+                    if "invalid content length" in str(exc):
+                        raise
+                    raise ValueError("remote response has an invalid content length") from exc
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_IMPORT_BYTES:
+                    raise ValueError(f"remote response exceeds {MAX_IMPORT_BYTES} bytes")
+                chunks.append(chunk)
+            try:
+                return json.loads(b"".join(chunks))
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValueError("remote response was not valid JSON") from exc
+    raise ValueError("remote response exceeded the redirect limit")
 
 
 async def load_payload(*, file_path: str | None = None, url: str | None = None, timeout: float = 30) -> Any:
     if bool(file_path) == bool(url):
         raise ValueError("provide exactly one of --file or --url")
+    if timeout <= 0 or timeout > 120:
+        raise ValueError("timeout must be greater than 0 and at most 120 seconds")
     if file_path:
-        return json.loads(Path(file_path).read_text(encoding="utf-8"))
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        response = await client.get(url or "")
-        response.raise_for_status()
-        return response.json()
+        path = Path(file_path)
+        try:
+            if path.stat().st_size > MAX_IMPORT_BYTES:
+                raise ValueError(f"local payload exceeds {MAX_IMPORT_BYTES} bytes")
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError("local payload could not be read as JSON") from exc
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            return await _read_remote_json(client, url or "")
+    except httpx.HTTPError as exc:
+        raise ValueError("remote request failed") from exc
 
 
 async def ensure_infrastructure_source(

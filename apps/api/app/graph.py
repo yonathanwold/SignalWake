@@ -59,6 +59,13 @@ class GraphEngine:
                 self._adjacency[edge.to_id].append((edge.from_id, edge))
         for node_id in self.nodes:
             self._adjacency[node_id].sort(key=lambda item: (item[0], item[1].relationship_type, item[1].id))
+        # Metrics are expensive structural graph calculations. Keep the
+        # memoization request-local (one engine is built per API request) so
+        # list/metrics endpoints do not repeat Brandes/Tarjan work for every
+        # returned node, without introducing stale process-wide cache state.
+        self._metrics_cache: dict[tuple[str, ...], dict[str, dict]] = {}
+        self._structural_metrics_cache: dict[tuple[str, ...], dict[str, dict]] = {}
+        self._alternate_path_cache: dict[tuple[str, ...], dict[str, int]] = {}
 
     def _allowed(self, edge: GraphEdge, relationship_types: set[str] | None) -> bool:
         return not relationship_types or edge.relationship_type in relationship_types
@@ -288,14 +295,61 @@ class GraphEngine:
         return {node_id: round(value, 8) for node_id, value in sorted(scores.items())}
 
     def metrics(self, node_id: str, relationship_types: set[str] | None = None) -> dict:
+        cache_key = tuple(sorted(relationship_types or ()))
+        cached = self._metrics_cache.get(cache_key)
+        if cached is None:
+            cached = {}
+            self._metrics_cache[cache_key] = cached
+        if node_id in cached:
+            return dict(cached[node_id])
+
+        structural = self._structural_metrics_cache.get(cache_key)
+        if structural is None:
+            structural = self._compute_structural_metrics(relationship_types)
+            self._structural_metrics_cache[cache_key] = structural
+        item = dict(structural.get(node_id, {
+            "degree": 0,
+            "component_size": 0,
+            "betweenness_centrality": 0.0,
+            "is_articulation_point": False,
+        }))
+        alternate_cache = self._alternate_path_cache.setdefault(cache_key, {})
+        if node_id not in alternate_cache:
+            alternate_cache[node_id] = self._alternate_path_count(node_id, relationship_types)
+        item["alternate_path_count"] = alternate_cache[node_id]
+        cached[node_id] = item
+        return dict(item)
+
+    def _compute_structural_metrics(self, relationship_types: set[str] | None = None) -> dict[str, dict]:
         components = self.connected_components(relationship_types)
-        component_size = next((len(item) for item in components if node_id in item), 0)
         articulation = self.articulation_points(relationship_types)
         centrality = self.betweenness_centrality(relationship_types)
+        component_sizes = {
+            node_id: len(component)
+            for component in components
+            for node_id in component
+        }
+        result: dict[str, dict] = {}
+        for current_node_id in self.nodes:
+            result[current_node_id] = {
+                "degree": self.degree(current_node_id, relationship_types),
+                "component_size": component_sizes.get(current_node_id, 0),
+                "betweenness_centrality": centrality.get(current_node_id, 0.0),
+                "is_articulation_point": current_node_id in articulation,
+            }
+        return result
+
+    def _alternate_path_count(
+        self, node_id: str, relationship_types: set[str] | None = None
+    ) -> int:
+        """Count alternate routes only for the requested node."""
+
+        if node_id not in self.nodes:
+            return 0
         alternate_paths = 0
         # For an undirected edge, an alternate path exists if its endpoints
-        # remain connected after the direct edge is ignored.  This count is
-        # intentionally structural and is never called an operational score.
+        # remain connected after the direct edge is ignored. This remains
+        # structural and is never called an operational score.
         for neighbor_id, edge in self._neighbors_for(node_id, relationship_types=relationship_types):
             visited = {node_id}
             queue = deque([node_id])
@@ -310,10 +364,4 @@ class GraphEngine:
                     queue.append(candidate)
             if neighbor_id in visited:
                 alternate_paths += 1
-        return {
-            "degree": self.degree(node_id, relationship_types),
-            "component_size": component_size,
-            "betweenness_centrality": centrality.get(node_id, 0.0),
-            "is_articulation_point": node_id in articulation,
-            "alternate_path_count": alternate_paths,
-        }
+        return alternate_paths

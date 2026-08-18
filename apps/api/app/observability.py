@@ -7,6 +7,7 @@ Persisted processing facts continue to come from ``TransformationRun``.
 
 from __future__ import annotations
 
+import re
 from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ MAX_ENDPOINTS = 100
 MAX_INCIDENTS = 50
 MAX_ERROR_TEXT = 240
 DEFAULT_FRESHNESS_SECONDS = 3600
+_URL_PATTERN = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 
 
 def utc_now() -> datetime:
@@ -27,7 +29,7 @@ def utc_now() -> datetime:
 def bounded_text(value: object | None, limit: int = MAX_ERROR_TEXT) -> str | None:
     if value is None:
         return None
-    text = str(value).replace("\r", " ").replace("\n", " ").strip()
+    text = _URL_PATTERN.sub("<url>", str(value)).replace("\r", " ").replace("\n", " ").strip()
     return text[:limit] if text else None
 
 

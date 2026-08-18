@@ -30,6 +30,7 @@ from app.graph import GraphEdge, GraphEngine
 from app.graph_repository import (
     edge_between,
     edge_response,
+    list_relationship_edges,
     load_graph_context,
     node_response,
 )
@@ -207,12 +208,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.state.startup_ready = True
+runtime_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
+    allow_origins=runtime_settings.cors_origin_list,
+    allow_credentials=runtime_settings.cors_allow_credentials,
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Accept", "Content-Type", "X-Request-ID"],
 )
 
 
@@ -261,6 +263,11 @@ async def observe_requests(request: Request, call_next):
         )
         if "response" in locals():
             response.headers["X-Request-ID"] = request_id
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+            response.headers["Cache-Control"] = "no-store"
 
 
 async def session_dependency(
@@ -781,14 +788,16 @@ async def graph_nodes(
     page: int | None = Query(None, ge=1),
     session: AsyncSession = Depends(session_dependency),
 ) -> GraphNodeListResponse:
-    assets, engine = await load_graph_context(session)
-    filtered = [
-        asset
-        for asset in assets
-        if (not type or asset.asset_type == type)
-        and (not region or asset.region == region)
-        and (not source or (asset.source and asset.source.key == source.lower()))
-    ]
+    # Apply list filters while loading the context so the relationship query
+    # is scoped in SQL as well; this endpoint's structural metrics are scoped
+    # to the same filtered graph shown to the caller.
+    assets, engine = await load_graph_context(
+        session,
+        asset_type=type,
+        region=region,
+        source=source,
+    )
+    filtered = assets
     offset = (page - 1) * limit if page else cursor
     visible = filtered[offset : offset + limit + 1]
     next_cursor = str(offset + limit) if len(visible) > limit else None
@@ -819,19 +828,17 @@ async def graph_edges(
     session: AsyncSession = Depends(session_dependency),
 ) -> GraphEdgeListResponse:
     selected_types = _relationship_filter(relationship_type)
-    _assets, engine = await load_graph_context(session, relationship_types=selected_types)
-    edges = [
-        edge
-        for edge in engine.edges.values()
-        if not selected_types or edge.relationship_type in selected_types
-    ]
-    edges = sorted(edges, key=lambda edge: (edge.relationship_type, edge.from_id, edge.to_id, edge.id))
-    visible = edges[cursor : cursor + limit]
-    return GraphEdgeListResponse(
-        items=[edge_response(edge) for edge in visible],
-        total=len(edges),
+    edges, total, next_cursor = await list_relationship_edges(
+        session,
+        relationship_types=selected_types,
         limit=limit,
-        next_cursor=str(cursor + limit) if cursor + limit < len(edges) else None,
+        cursor=cursor,
+    )
+    return GraphEdgeListResponse(
+        items=[edge_response(edge) for edge in edges],
+        total=total,
+        limit=limit,
+        next_cursor=str(next_cursor) if next_cursor is not None else None,
     )
 
 

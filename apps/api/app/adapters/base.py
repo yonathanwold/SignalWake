@@ -10,6 +10,8 @@ from typing import Any
 import httpx
 import structlog
 
+from app.observability import bounded_text
+
 log = structlog.get_logger(__name__)
 
 
@@ -76,8 +78,9 @@ class SourceAdapter(ABC):
                 raise AdapterError(f"{self.key} response did not contain a GeoJSON feature list")
             return features
         except (httpx.HTTPError, ValueError, TypeError) as exc:
-            log.error("source_fetch_failed", source=self.key, error=str(exc))
-            raise AdapterError(f"{self.key} fetch failed: {exc}") from exc
+            error = bounded_text(exc) or "source fetch failed"
+            log.error("source_fetch_failed", source=self.key, error=error)
+            raise AdapterError(f"{self.key} fetch failed: {error}") from exc
         finally:
             if own_client:
                 await client.aclose()
