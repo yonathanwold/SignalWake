@@ -23,6 +23,32 @@ version, threshold/tolerance, measured distance where applicable, asset/source
 record IDs, and source URLs. No dependency, supply, alternative, location,
 impact, or scenario semantics are inferred.
 
+Assessments are a third, separate persisted layer. `InfrastructureAssessment`
+rows are labeled `SIGNALWAKE DERIVED ASSESSMENT` and never replace `LIVE` event
+observations, `REFERENCE` assets, or graph edges. Phase 4 supports geometry
+intersection, point-event radius correlation, and bounded structural
+connected-graph traversal. Regional exposure is omitted unless an event
+region is an actual source fact. Current graph relationships are undirected,
+so dependency exposure is not upstream/downstream operational dependency.
+
+The `phase4-v1` score persists named components and fixed weights: event
+severity 50%, spatial match 35%, and bounded graph exposure 15%. Severity
+normalization is `info .2`, `advisory .4`, `watch .6`, `warning .8`, `critical
+1.0`; boundary intersections and radius limits are inclusive. The score
+prioritizes review of structural exposure and does not predict outage,
+economic loss, consequence, or causality. Confidence is returned as `null`.
+Evidence includes source event/asset IDs, geometry predicate or distance/radius,
+and graph path/relationship IDs. Recompute is explicit and idempotent:
+
+```powershell
+python -m app.assessments --event-id <event-id> --radius-km 50 --depth 2
+```
+
+The API equivalent is `POST /assessments/recompute`; bounded list/detail and
+event/asset views are under `/assessments`, `/events/{id}/assessments`, and
+`/infrastructure/{id}/assessments`. Stale rows are deleted only for the
+selected event and methodology version. Scenario Lab is not part of Phase 4.
+
 ## Adapter behavior
 
 Adapters send a descriptive user-agent, enforce a timeout, retry transient 429/5xx responses with bounded exponential backoff, and return structured errors for malformed JSON or missing fields. `ingest_once` runs one bounded pass over every adapter, records source attempt/success/error metadata, preserves each valid raw payload, and writes canonical `LIVE` events idempotently. Malformed features are logged and skipped without blocking the other source. Tests use checked-in JSON fixtures and monkeypatch the fetch boundary, so CI never calls NWS or USGS.
@@ -61,6 +87,12 @@ stale `DERIVED` edges on rebuild, and never modifies `SOURCE_OBSERVED` rows.
 The API also exposes the explicit `POST /graph/rebuild` operation with bounded
 settings. GET requests never silently rebuild graph state.
 
+After the graph and assets exist, recompute an event assessment explicitly.
+No GET request rebuilds assessments. `radius_km` is capped at 500, traversal
+depth at 4, and asset candidates at 5,000. SQLite tests are fixture-only and
+do not use network services. PostGIS remains the production spatial runtime;
+coverage and conclusions depend on the imported source records.
+
 ## Verification commands
 
 ```powershell
@@ -80,3 +112,8 @@ predicates, duplicate/upsert behavior, stale/unsupported negatives, API
 filters/bounds, and provenance. SQLite is the deterministic test path; Docker
 PostGIS runtime validation is not available in this environment, so migration
 tests assert the SRID, GiST, FK, uniqueness, and predicate DDL instead.
+Assessment tests additionally cover exact intersection/radius boundaries,
+component formula/version math, null confidence, relationship evidence,
+bounded graph traversal, idempotent recompute/stale cleanup, and API filter,
+detail, and validation behavior. Tests never call NWS, USGS, or public
+infrastructure URLs.

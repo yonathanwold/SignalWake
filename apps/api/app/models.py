@@ -136,6 +136,19 @@ class RelationshipDirectionality(str, enum.Enum):
     DIRECTED = "DIRECTED"
 
 
+class AssessmentType(str, enum.Enum):
+    EVENT_INTERSECTS_INFRASTRUCTURE = "EVENT_INTERSECTS_INFRASTRUCTURE"
+    INFRASTRUCTURE_WITHIN_EVENT_RADIUS = "INFRASTRUCTURE_WITHIN_EVENT_RADIUS"
+    DEPENDENCY_EXPOSURE = "DEPENDENCY_EXPOSURE"
+    REGIONAL_INFRASTRUCTURE_EXPOSURE = "REGIONAL_INFRASTRUCTURE_EXPOSURE"
+
+
+class AssessmentStatus(str, enum.Enum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    OBSERVED = "observed"
+
+
 class Source(Base):
     __tablename__ = "sources"
 
@@ -329,3 +342,43 @@ class Event(Base):
     classification: Mapped[str] = mapped_column(String(16), default="LIVE")
 
     source: Mapped[Source] = relationship(back_populates="events")
+
+
+class InfrastructureAssessment(Base):
+    """Deterministic, persisted assessment derived from an event and assets.
+
+    Assessments intentionally sit apart from source facts and graph edges.  A
+    stable key makes event-scoped recomputation idempotent while preserving
+    the identity of each derived result across refreshes.
+    """
+
+    __tablename__ = "infrastructure_assessments"
+    __table_args__ = (
+        UniqueConstraint("assessment_key", name="uq_infrastructure_assessment_key"),
+        Index("ix_assessment_event_type", "event_id", "assessment_type"),
+        Index("ix_assessment_asset", "affected_asset_id"),
+        Index("ix_assessment_status_score", "status", "score"),
+        Index("ix_assessment_methodology", "event_id", "methodology_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    assessment_key: Mapped[str] = mapped_column(String(768))
+    assessment_type: Mapped[str] = mapped_column(String(64), index=True)
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"), index=True)
+    affected_asset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("infrastructure_assets.id"), nullable=True, index=True
+    )
+    affected_region: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    severity: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    score: Mapped[float] = mapped_column(Float)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    methodology_version: Mapped[str] = mapped_column(String(32), index=True)
+    evidence_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    score_components_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    metadata_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    event: Mapped[Event] = relationship(backref="assessments")
+    affected_asset: Mapped[InfrastructureAsset | None] = relationship(backref="assessments")

@@ -1,4 +1,4 @@
-import type { CanonicalEvent, InfrastructureAsset, Source } from "./types";
+import type { CanonicalEvent, InfrastructureAsset, InfrastructureAssessment, Source } from "./types";
 
 const portSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::port-facilities/about";
 const railSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::rail-lines/about";
@@ -83,7 +83,7 @@ export const demoSources: Source[] = [
   { id: "demo-source-usgs", key: "usgs", name: "United States Geological Survey", kind: "USGS", endpoint: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson", active: true, adapter_version: "1.0.0", last_success_at: "2026-08-17T14:31:05Z", last_attempt_at: "2026-08-17T14:31:05Z", last_error: null, last_http_status: 200, freshness_seconds: 0, health: "HEALTHY" },
 ];
 
-export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; infrastructure: InfrastructureAsset[]; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
+export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; infrastructure: InfrastructureAsset[]; assessments: InfrastructureAssessment[]; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
   try {
     const [eventsResponse, sourcesResponse, infrastructureResponse] = await Promise.all([
@@ -95,8 +95,19 @@ export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources
     const eventBody = (await eventsResponse.json()) as { items: CanonicalEvent[] };
     const sourceBody = (await sourcesResponse.json()) as Source[];
     const infrastructureBody = (await infrastructureResponse.json()) as { items: InfrastructureAsset[] };
-    return { events: eventBody.items, sources: sourceBody, infrastructure: infrastructureBody.items, mode: "LIVE", fetchedAt: new Date().toISOString() };
+    let assessments: InfrastructureAssessment[] = [];
+    try {
+      const assessmentsResponse = await fetch(`${base}/assessments?limit=500`, { cache: "no-store", signal: AbortSignal.timeout(2200) });
+      if (assessmentsResponse.ok) {
+        const assessmentsBody = (await assessmentsResponse.json()) as { items: InfrastructureAssessment[] };
+        assessments = assessmentsBody.items;
+      }
+    } catch {
+      // Assessment data is optional to the source/event live path. The UI
+      // keeps the derived panel empty and labeled when this endpoint is down.
+    }
+    return { events: eventBody.items, sources: sourceBody, infrastructure: infrastructureBody.items, assessments, mode: "LIVE", fetchedAt: new Date().toISOString() };
   } catch {
-    return { events: demoEvents, sources: demoSources, infrastructure: demoInfrastructure, mode: "DEMO", fetchedAt: new Date().toISOString() };
+    return { events: demoEvents, sources: demoSources, infrastructure: demoInfrastructure, assessments: [], mode: "DEMO", fetchedAt: new Date().toISOString() };
   }
 }

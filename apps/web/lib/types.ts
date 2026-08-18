@@ -126,3 +126,30 @@ export type GraphEdge = {
 
 export type GraphNodeList = { items: GraphNode[]; total: number; limit: number; next_cursor: string | null };
 export type GraphSubgraph = { root_node_id: string; depth: number; max_nodes: number; truncated: boolean; nodes: GraphNode[]; edges: GraphEdge[] };
+
+export type InfrastructureAssessment = {
+  classification: "SIGNALWAKE DERIVED ASSESSMENT" | string;
+  id: string;
+  assessment_key: string;
+  assessment_type: "EVENT_INTERSECTS_INFRASTRUCTURE" | "INFRASTRUCTURE_WITHIN_EVENT_RADIUS" | "DEPENDENCY_EXPOSURE" | "REGIONAL_INFRASTRUCTURE_EXPOSURE" | string;
+  event_id: string;
+  affected_asset_id: string | null;
+  affected_region: string | null;
+  severity: Severity | string;
+  status: string;
+  score: number;
+  confidence: number | null;
+  methodology_version: string;
+  evidence: Record<string, unknown>;
+  score_components: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InfrastructureAssessmentList = {
+  items: InfrastructureAssessment[];
+  total: number;
+  limit: number;
+  next_cursor: string | null;
+};

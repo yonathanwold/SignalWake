@@ -194,6 +194,51 @@ class GraphRebuildResponse(BaseModel):
     settings: dict[str, Any]
 
 
+class AssessmentResponse(BaseModel):
+    classification: str = "SIGNALWAKE DERIVED ASSESSMENT"
+    id: str
+    assessment_key: str
+    assessment_type: str
+    event_id: str
+    affected_asset_id: str | None = None
+    affected_region: str | None = None
+    severity: str
+    status: str
+    score: float = Field(ge=0, le=100)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    methodology_version: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    score_components: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssessmentListResponse(BaseModel):
+    items: list[AssessmentResponse]
+    total: int
+    limit: int
+    next_cursor: str | None = None
+
+
+class AssessmentRecomputeRequest(BaseModel):
+    event_id: str
+    radius_km: float = Field(default=50.0, gt=0, le=500)
+    depth: int = Field(default=2, ge=1, le=4)
+    asset_limit: int = Field(default=200, ge=1, le=5000)
+
+
+class AssessmentRecomputeResponse(BaseModel):
+    event_id: str
+    methodology_version: str
+    inserted_count: int
+    updated_count: int
+    deleted_count: int
+    total: int
+    settings: dict[str, Any]
+    items: list[AssessmentResponse]
+
+
 class HealthResponse(BaseModel):
     status: str
     service: str

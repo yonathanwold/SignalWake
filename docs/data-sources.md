@@ -68,3 +68,28 @@ future `SOURCE_OBSERVED` rows with source relationship IDs; derived rebuilds
 never overwrite or delete those rows. No `DEPENDS_ON`, `SUPPLIES`,
 `ALTERNATIVE_TO`, or `LOCATED_IN` edge is currently supported, and graph edges
 are not event impact assessments.
+
+## Phase 4 assessment inputs and limits
+
+Assessments use only persisted event observations, imported reference asset
+geometry/region fields, and persisted graph relationship evidence. They are
+stored separately as `SIGNALWAKE DERIVED ASSESSMENT` rows and are never source
+facts. Recompute is explicit (`python -m app.assessments --event-id ...` or
+`POST /assessments/recompute`) and bounded by caller-selected radius/depth.
+
+`EVENT_INTERSECTS_INFRASTRUCTURE` uses an inclusive geometry intersection.
+`INFRASTRUCTURE_WITHIN_EVENT_RADIUS` applies only when the event is a point and
+uses an inclusive WGS84 point-to-asset distance. `DEPENDENCY_EXPOSURE` uses a
+bounded traversal through the undirected graph and stores the seed, path,
+relationship IDs, and relationship evidence. It is structural connected-graph
+exposure, not operational upstream/downstream dependency. A regional
+assessment is not emitted unless both the event region and asset region are
+actual known facts; no region is inferred from map position or geometry.
+
+The `phase4-v1` prioritization score stores event severity (50%), spatial match
+(35%), and bounded graph exposure (15%) components and their fixed weights.
+Confidence is `null`: these sources do not provide defensible outage,
+consequence, economic-loss, or causal labels. Scores therefore do not predict
+impact or service interruption, and Phase 4 does not include Scenario Lab.
+SQLite geometry helpers are deterministic fixture tooling; PostGIS and actual
+dataset coverage are deployment-dependent.

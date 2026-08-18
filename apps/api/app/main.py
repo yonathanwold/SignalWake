@@ -13,6 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.adapters.nws import NWSAdapter
 from app.adapters.usgs import USGSAdapter
+from app.assessments import (
+    assessment_response,
+    get_assessment,
+    list_assessments,
+    recompute_event_assessments,
+)
 from app.config import Settings, get_settings
 from app.database import create_engine, init_db, session_factory
 from app.derivation import DerivationSettings, rebuild_derived_relationships
@@ -34,6 +40,10 @@ from app.repository import (
     source_response,
 )
 from app.schemas import (
+    AssessmentListResponse,
+    AssessmentRecomputeRequest,
+    AssessmentRecomputeResponse,
+    AssessmentResponse,
     EventListResponse,
     EventResponse,
     GraphMetricsResponse,
@@ -260,6 +270,136 @@ async def infrastructure_detail(
     if asset is None:
         raise HTTPException(status_code=404, detail="Infrastructure asset not found")
     return asset
+
+
+@app.get("/assessments", response_model=AssessmentListResponse, tags=["assessments"])
+async def assessments(
+    event_id: str | None = Query(None),
+    asset_id: str | None = Query(None),
+    assessment_type: str | None = Query(None),
+    type_filter: str | None = Query(None, alias="type"),
+    status: str | None = Query(None),
+    min_score: float | None = Query(None, ge=0, le=100),
+    max_score: float | None = Query(None, ge=0, le=100),
+    limit: int = Query(100, ge=1, le=500),
+    cursor: int = Query(0, ge=0),
+    page: int | None = Query(None, ge=1),
+    session: AsyncSession = Depends(session_dependency),
+) -> AssessmentListResponse:
+    if min_score is not None and max_score is not None and min_score > max_score:
+        raise HTTPException(status_code=422, detail="min_score must not exceed max_score")
+    offset = (page - 1) * limit if page else cursor
+    items, total, next_offset = await list_assessments(
+        session,
+        event_id=event_id,
+        asset_id=asset_id,
+        assessment_type=assessment_type or type_filter,
+        status=status,
+        min_score=min_score,
+        max_score=max_score,
+        limit=limit,
+        cursor=offset,
+    )
+    return AssessmentListResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        next_cursor=str(next_offset) if next_offset is not None else None,
+    )
+
+
+@app.get("/assessments/{assessment_id}", response_model=AssessmentResponse, tags=["assessments"])
+async def assessment_detail(
+    assessment_id: str, session: AsyncSession = Depends(session_dependency)
+) -> AssessmentResponse:
+    item = await get_assessment(session, assessment_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    return item
+
+
+@app.get(
+    "/events/{event_id}/assessments",
+    response_model=AssessmentListResponse,
+    tags=["assessments"],
+)
+async def event_assessments(
+    event_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    cursor: int = Query(0, ge=0),
+    session: AsyncSession = Depends(session_dependency),
+) -> AssessmentListResponse:
+    if await get_event(session, event_id) is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    items, total, next_offset = await list_assessments(
+        session, event_id=event_id, limit=limit, cursor=cursor
+    )
+    return AssessmentListResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        next_cursor=str(next_offset) if next_offset is not None else None,
+    )
+
+
+@app.get(
+    "/infrastructure/{asset_id}/assessments",
+    response_model=AssessmentListResponse,
+    tags=["assessments"],
+)
+async def infrastructure_assessments(
+    asset_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    cursor: int = Query(0, ge=0),
+    session: AsyncSession = Depends(session_dependency),
+) -> AssessmentListResponse:
+    if await get_infrastructure(session, asset_id) is None:
+        raise HTTPException(status_code=404, detail="Infrastructure asset not found")
+    items, total, next_offset = await list_assessments(
+        session, asset_id=asset_id, limit=limit, cursor=cursor
+    )
+    return AssessmentListResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        next_cursor=str(next_offset) if next_offset is not None else None,
+    )
+
+
+@app.post(
+    "/assessments/recompute",
+    response_model=AssessmentRecomputeResponse,
+    tags=["assessments"],
+)
+async def assessments_recompute(
+    request: AssessmentRecomputeRequest,
+    session: AsyncSession = Depends(session_dependency),
+) -> AssessmentRecomputeResponse:
+    try:
+        result = await recompute_event_assessments(
+            session,
+            request.event_id,
+            radius_km=request.radius_km,
+            depth=request.depth,
+            asset_limit=request.asset_limit,
+        )
+        await session.commit()
+    except LookupError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return AssessmentRecomputeResponse(
+        event_id=result.event_id,
+        methodology_version=result.methodology_version,
+        inserted_count=result.inserted_count,
+        updated_count=result.updated_count,
+        deleted_count=result.deleted_count,
+        total=len(result.items),
+        settings=result.settings,
+        items=[assessment_response(item) for item in result.items],
+    )
 
 
 GRAPH_RELATIONSHIP_TYPES = {item.value for item in InfrastructureRelationshipType}

@@ -9,6 +9,7 @@ The first slice is intentionally honest about its boundary:
 - `DERIVED` means normalized event fields such as severity and type; it does not mean an infrastructure impact prediction.
 - `REFERENCE` means an imported infrastructure asset whose geometry and metadata came from a named public source. It is intentionally separate from live event observations.
 - Infrastructure Graph is a bounded, API-backed workspace over persisted Phase 3 relationships. Scenario Lab, Historical Replay, Source Provenance, and System Health remain routed shells for later milestones.
+- Phase 4 assessments are a separate `SIGNALWAKE DERIVED ASSESSMENT` layer. They correlate an event with source-provided infrastructure using deterministic geometry predicates, bounded radius checks, and bounded structural graph traversal. They are exposure-prioritization scores, not outage, economic-loss, causal, or operational dependency predictions.
 - The Operational Map uses MapLibre GL JS with local, token-free GeoJSON rendering for the same canonical events as the feed; its SVG surface is an explicit runtime fallback only if MapLibre initialization fails.
 
 ## Run locally
@@ -57,6 +58,26 @@ python -m app.derivation
 The builder creates only `CONNECTED_TO` (rail LineString endpoints within 100 m), `INTERSECTS` (actual geometry intersection), and `ADJACENT_TO` (a port point within 25 km of a rail corridor, with matching regions when both are supplied). Distances are WGS84 great-circle/segment estimates in SQLite and PostGIS spatial predicates in production. Edges are `DERIVED`, carry source record/provenance evidence, and are idempotent; stale derived edges are removed without touching future `SOURCE_OBSERVED` edges. No `DEPENDS_ON`, `SUPPLIES`, `ALTERNATIVE_TO`, or impact/scenario edges are inferred.
 
 The graph API is bounded: `/graph/nodes`, `/graph/nodes/{id}`, `/graph/nodes/{id}/neighbors`, `/graph/paths`, `/graph/subgraph`, `/graph/metrics`, and explicit `POST /graph/rebuild` expose sorted nodes, edges, provenance, and structural metrics. The browser workspace defaults to a depth-2 / 30-node subgraph and shows an honest empty state when no persisted edge exists.
+
+### Recompute event assessments
+
+Assessments are recomputed explicitly for one event. This writes only the
+versioned assessment projection and removes stale rows for that event and
+methodology; it does not rewrite events, infrastructure facts, or graph edges:
+
+```powershell
+python -m app.assessments --event-id <event-id> --radius-km 50 --depth 2
+```
+
+The equivalent API call is `POST /assessments/recompute` with JSON such as
+`{"event_id":"<event-id>","radius_km":50,"depth":2}`. Read results through
+`GET /assessments`, `GET /assessments/{id}`,
+`GET /events/{id}/assessments`, and
+`GET /infrastructure/{id}/assessments`. The current methodology is
+`phase4-v1`: `score = event severity × 0.50 + spatial match × 0.35 + bounded
+graph exposure × 0.15`, with each named component and fixed weight persisted
+in `score_components`. Confidence is `null` because the available facts do
+not support a probability of outage or impact.
 
 ## Verification
 

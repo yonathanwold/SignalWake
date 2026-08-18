@@ -55,6 +55,49 @@ InfrastructureRelationship (source-aware, idempotent edge)
 Infrastructure Graph scoped workspace
 ```
 
+Phase 4 adds an explicit assessment projection over those two persisted
+domains. It does not overwrite either input layer:
+
+```text
+LIVE Event + REFERENCE InfrastructureAsset + persisted graph edges
+    | explicit event-scoped recompute (bounded radius/depth)
+    v
+InfrastructureAssessment (SIGNALWAKE DERIVED ASSESSMENT)
+    | typed list/detail/event/asset views
+    v
+Event Feed + Operational Map inspectors + Graph node details
+```
+
+Supported assessment types are `EVENT_INTERSECTS_INFRASTRUCTURE` (inclusive
+geometry intersection), `INFRASTRUCTURE_WITHIN_EVENT_RADIUS` (inclusive
+point-to-asset distance for point-only events), and `DEPENDENCY_EXPOSURE`
+(bounded traversal from a directly correlated asset through persisted graph
+relationships). Since current graph edges are undirected, the latter means
+structural connected-graph exposure, not upstream/downstream dependency or an
+outage. `REGIONAL_INFRASTRUCTURE_EXPOSURE` is reserved for a future event
+region fact and is not emitted when the source event does not actually provide
+one; geometry never invents a region.
+
+`InfrastructureAssessment` is a separate persisted derived layer with a
+stable methodology-versioned key, event/asset foreign keys, optional region,
+severity/status, score, nullable confidence, JSON evidence/components/metadata,
+and timestamps. `phase4-v1` stores this transparent formula and fixed weights
+for every row:
+
+```text
+score = event_severity_score * 0.50
+      + spatial_match_score * 0.35
+      + graph_exposure_score * 0.15
+```
+
+Severity normalizes `info=.2`, `advisory=.4`, `watch=.6`, `warning=.8`, and
+`critical=1.0`. Intersection has a 100 spatial match; radius uses
+`max(0, 1 - distance/radius) × 100`; graph exposure uses bounded hop
+proximity. The score is exposure prioritization only, not predicted impact.
+Confidence is `null` because available facts do not support a probability of
+outage or consequence. Recompute upserts stable keys and removes stale rows
+only for the selected event and methodology.
+
 Current node types are `port` (BTS Port Facilities) and `rail_corridor` (FRA
 Rail Lines). Current relationship types are:
 
@@ -88,6 +131,12 @@ endpoint foreign keys, relationship/source/directionality fields, derivation
 method/version, optional confidence, evidence JSON, distance/tolerance, and
 timestamps. Endpoint/type/source indexes support bounded adjacency lookups.
 
+`004_infrastructure_assessments.sql` stores the separate assessment projection
+with event/asset foreign keys, stable-key uniqueness, score/confidence checks,
+and event/type/asset/status/methodology indexes. JSON evidence/components are
+validated by the typed API and retain predicates, distances/radii, graph paths,
+relationship IDs, formula/weights, and source fact IDs.
+
 ## API contract
 
 - `GET /health` — service, database, and source freshness status.
@@ -103,6 +152,10 @@ timestamps. Endpoint/type/source indexes support bounded adjacency lookups.
 - `GET /graph/subgraph` — bounded root/depth/type/region/relationship subgraph.
 - `GET /graph/metrics` — structural metrics for one node or a bounded filtered set.
 - `POST /graph/rebuild` — explicit bounded derivation with configurable endpoint tolerance and port-to-rail distance.
+- `GET /assessments` — bounded list with event, asset, type, status, score range, and cursor filters.
+- `GET /assessments/{id}` — one derived assessment with evidence and named score components.
+- `GET /events/{id}/assessments` and `GET /infrastructure/{id}/assessments` — scoped assessment views.
+- `POST /assessments/recompute` — explicit event-scoped upsert/cleanup with validated radius, depth, and asset bounds.
 
 The browser's map markers and feed rows are both projections of the same `Event` response. Infrastructure layers and the reference inspector are projections of `/infrastructure`; the browser does not ship a full static dataset. MapLibre uses separate GeoJSON sources for events and infrastructure. The SVG renderer remains a fallback.
 
@@ -110,7 +163,17 @@ The browser's map markers and feed rows are both projections of the same `Event`
 
 PostgreSQL uses `ST_Intersects(geometry, ST_MakeEnvelope(..., 4326))` for viewport filtering and `ST_DWithin(geometry::geography, ..., metres)` for distance queries. Reusable service functions also expose geometry intersection and distance operations for internal workflows. SQLite has no spatial extension in the deterministic test path, so it validates Point/LineString/Polygon GeoJSON and filters a bounded in-memory candidate set with conservative pure-Python primitives. It is not a production-scale spatial substitute. API limits are capped at 500 assets per request; callers should use `cursor`/`page` for larger imports.
 
-Infrastructure assets are reference facts only. SIGNALWAKE does not infer graph edges, disruption likelihood, consequence, or scenario results in Phase 2.
+Infrastructure assets are reference facts only. Assessments are deterministic
+exposure prioritization, not predicted impact. SIGNALWAKE does not claim
+outages, economic losses, real-world operational causality, or
+upstream/downstream dependency. Scenario Lab remains out of scope for Phase 4.
+
+Assessment recompute is deliberately bounded and event-specific. SQLite uses
+the same pure-Python geometry helpers as fixture tests but is not a
+production-scale spatial substitute; PostGIS runtime coverage and actual
+source dataset coverage depend on deployment and imported data. Missing
+geometry, event point coordinates, regions, or relationship evidence produce
+no assessment rather than an invented fact.
 
 ## Graph engine limits and metrics
 
