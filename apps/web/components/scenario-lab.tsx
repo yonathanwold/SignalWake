@@ -18,6 +18,92 @@ function formatHash(hash: string) {
   return hash ? `${hash.slice(0, 12)}…` : "—";
 }
 
+type SnapshotNode = {
+  id: string;
+  name: string;
+  asset_type: string;
+  region: string | null;
+  source_key: string | null;
+};
+
+type SnapshotEdge = {
+  id: string;
+  from_id: string;
+  to_id: string;
+  relationship_type: string;
+};
+
+type Snapshot = {
+  nodes: SnapshotNode[];
+  edges: SnapshotEdge[];
+  hash: string;
+  node_count: number;
+  edge_count: number;
+};
+
+const SNAPSHOT_NODE_LIMIT = 24;
+const SNAPSHOT_EDGE_LIMIT = 48;
+
+function SnapshotGraph({
+  state,
+  snapshot,
+  removedNodeIds,
+  removedEdgeIds,
+  affectedNodeIds,
+}: {
+  state: "baseline" | "modified";
+  snapshot: Snapshot;
+  removedNodeIds: string[];
+  removedEdgeIds: string[];
+  affectedNodeIds: string[];
+}) {
+  const visibleNodes = snapshot.nodes.slice(0, SNAPSHOT_NODE_LIMIT);
+  const visibleIds = new Set(visibleNodes.map((node) => node.id));
+  const candidateEdges = snapshot.edges.filter((edge) => visibleIds.has(edge.from_id) && visibleIds.has(edge.to_id));
+  const visibleEdges = candidateEdges.slice(0, SNAPSHOT_EDGE_LIMIT);
+  const omittedNodes = Math.max(0, snapshot.nodes.length - visibleNodes.length);
+  const omittedEdges = Math.max(0, snapshot.edges.length - visibleEdges.length);
+  const columns = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(Math.max(1, visibleNodes.length)))));
+  const rows = Math.max(1, Math.ceil(visibleNodes.length / columns));
+  const width = 520;
+  const height = Math.max(230, rows * 52 + 54);
+  const positions = new Map<string, { x: number; y: number }>();
+  visibleNodes.forEach((node, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    positions.set(node.id, { x: 68 + column * ((width - 136) / Math.max(1, columns - 1)), y: 28 + row * 52 });
+  });
+  const removedNodes = new Set(removedNodeIds);
+  const removedEdges = new Set(removedEdgeIds);
+  const affectedNodes = new Set(affectedNodeIds);
+  const nodeStatus = (id: string) => state === "baseline" && removedNodes.has(id) ? "removed" : affectedNodes.has(id) ? "affected" : "baseline";
+  const edgeStatus = (id: string) => state === "baseline" && removedEdges.has(id) ? "removed" : "baseline";
+
+  return <div className={`scenario-snapshot scenario-snapshot-${state}`}>
+    <div className="scenario-snapshot-heading"><div><span>{state === "baseline" ? "BASELINE" : "MODIFIED"}</span><strong>{state === "baseline" ? "Persisted graph snapshot" : "In-memory simulated graph"}</strong></div><code>{formatHash(snapshot.hash)}</code></div>
+    <div className="scenario-snapshot-canvas"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby={`snapshot-${state}-title snapshot-${state}-desc`}>
+      <title id={`snapshot-${state}-title`}>{state === "baseline" ? "Baseline persisted graph" : "Modified scenario graph"}</title>
+      <desc id={`snapshot-${state}-desc`}>{snapshot.node_count} nodes and {snapshot.edge_count} edges in the {state} snapshot. Removed targets are red and affected surviving nodes are amber.</desc>
+      {visibleEdges.map((edge) => {
+        const from = positions.get(edge.from_id);
+        const to = positions.get(edge.to_id);
+        if (!from || !to) return null;
+        return <line key={edge.id} className={`scenario-snapshot-edge scenario-snapshot-edge-${edgeStatus(edge.id)}`} x1={from.x} y1={from.y} x2={to.x} y2={to.y} aria-label={`${edge.relationship_type} ${edge.id}`} />;
+      })}
+      {visibleNodes.map((node) => {
+        const point = positions.get(node.id);
+        if (!point) return null;
+        const status = nodeStatus(node.id);
+        return <g key={node.id} className={`scenario-snapshot-node scenario-snapshot-node-${status}`}><circle cx={point.x} cy={point.y} r="12" /><text x={point.x} y={point.y + 27}>{node.name.length > 16 ? `${node.name.slice(0, 15)}…` : node.name}</text><title>{`${node.name} · ${status.toUpperCase()} · ${node.id}`}</title></g>;
+      })}
+    </svg></div>
+    <div className="scenario-snapshot-list" aria-label={`${state} visible graph nodes`}>
+      {visibleNodes.map((node) => <span key={node.id} className={`scenario-snapshot-chip scenario-snapshot-chip-${nodeStatus(node.id)}`} title={node.id}>{node.name}</span>)}
+    </div>
+    <p className="scenario-snapshot-note">Showing {visibleNodes.length} of {snapshot.node_count} nodes and {visibleEdges.length} of {snapshot.edge_count} edges.{omittedNodes || omittedEdges ? ` Bounded view omits ${omittedNodes} nodes and ${omittedEdges} edges.` : ""}</p>
+  </div>;
+}
+
 export function ScenarioLab() {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
@@ -121,6 +207,8 @@ export function ScenarioLab() {
   }
 
   const metrics = run?.result?.metrics;
+  const baselineSnapshot = run?.result?.baseline as Snapshot | undefined;
+  const modifiedSnapshot = run?.result?.modified as Snapshot | undefined;
   const selectedTargetCount = scenarioType === "EDGE_UNAVAILABLE" ? (selectedEdge ? 1 : 0) : selectedNodes.length;
   const canCreate = scenarioType === "MULTIPLE_ASSETS_UNAVAILABLE" ? selectedTargetCount >= 2 : selectedTargetCount === 1;
 
@@ -152,7 +240,7 @@ export function ScenarioLab() {
         <div className="scenario-panel scenario-run-panel"><div className="scenario-panel-heading"><div><span>03 / EXECUTE</span><h2>{activeScenario ? activeScenario.name : "Run a saved definition"}</h2></div>{activeScenario && <button type="button" className="scenario-secondary-button" disabled={actionState !== "idle"} onClick={() => void runScenario()}>{actionState === "running" ? "RUNNING…" : run ? "RE-RUN (IDEMPOTENT)" : "RUN SCENARIO"}</button>}</div>{activeScenario ? <div className="scenario-run-context"><p>{activeScenario.assumption}</p><div><span>BASELINE HASH</span><code>{formatHash(activeScenario.baseline_graph_hash)}</code></div><div><span>TARGETS</span><code>{activeScenario.targets.map((target) => target.target_id.slice(0, 8)).join(" · ")}</code></div></div> : <p className="scenario-empty-note">Create a definition above, then run it explicitly to persist a result.</p>}{error && actionState === "idle" && <p className="scenario-inline-error">{error}</p>}</div>
       </section>
 
-      {run?.result && metrics && <section className="scenario-result" aria-labelledby="scenario-result-heading"><div className="scenario-panel-heading"><div><span>04 / RESULT</span><h2 id="scenario-result-heading">Baseline → modified graph</h2></div><span className="scenario-derived-label">DERIVED SECOND ORDER · {run.methodology_version}</span></div><div className="scenario-state-legend"><span className="scenario-state-tag scenario-baseline-tag">BASELINE <small>persisted snapshot</small></span><span className="scenario-state-tag scenario-removed-tag">REMOVED <small>selected targets</small></span><span className="scenario-state-tag scenario-affected-tag">AFFECTED <small>reachability changed</small></span><Link href="/infrastructure">OPEN INFRASTRUCTURE GRAPH ↗</Link></div><div className="scenario-metric-grid"><div><span>COMPONENTS</span><strong>{metrics.baseline.component_count} → {metrics.scenario.component_count}</strong></div><div><span>LARGEST COMPONENT</span><strong>{metrics.baseline.largest_component_size} → {metrics.scenario.largest_component_size}</strong></div><div><span>REACHABLE PAIRS</span><strong>{metrics.path_analysis.baseline_reachable_pairs} → {metrics.path_analysis.scenario_reachable_pairs}</strong></div><div><span>RESILIENCE (STRUCTURAL)</span><strong>{metrics.resilience.score.toFixed(1)} <em>{metrics.resilience.delta_from_intact.toFixed(1)}</em></strong></div></div><div className="scenario-result-columns"><div><h3>What changed</h3><p>{run.result.evidence.what_changed as string}</p><dl><dt>REMOVED NODES</dt><dd>{metrics.removed_node_ids.length ? metrics.removed_node_ids.join(", ") : "none"}</dd><dt>REMOVED EDGES</dt><dd>{metrics.removed_edge_ids.length ? metrics.removed_edge_ids.join(", ") : "none"}</dd><dt>AFFECTED / DISCONNECTED</dt><dd>{metrics.disconnected_node_ids.length ? metrics.disconnected_node_ids.join(", ") : "none observed"}</dd><dt>CHANGED PATHS</dt><dd>{metrics.path_analysis.changed_path_count} of {metrics.path_analysis.pairs_evaluated} bounded pairs</dd></dl></div><div><h3>Formula & limits</h3><p>Score = 100 × (0.45 × surviving reachability + 0.35 × largest-component fraction + 0.20 × alternate-route preservation − 0.10 × path-inflation penalty).</p><dl><dt>BASELINE HASH</dt><dd><code>{formatHash(run.baseline_graph_hash)}</code></dd><dt>MODIFIED HASH</dt><dd><code>{formatHash(run.modified_graph_hash)}</code></dd><dt>ALTERNATE ROUTES</dt><dd>{metrics.alternate_routes.baseline_alternate_route_edges} → {metrics.alternate_routes.scenario_alternate_route_edges}</dd><dt>NON-CLAIM</dt><dd>No outage, service, economic, logistical, or causal claim.</dd></dl></div></div></section>}
+      {run?.result && metrics && <section className="scenario-result" aria-labelledby="scenario-result-heading"><div className="scenario-panel-heading"><div><span>04 / RESULT</span><h2 id="scenario-result-heading">Baseline → modified graph</h2></div><span className="scenario-derived-label">DERIVED SECOND ORDER · {run.methodology_version}</span></div><div className="scenario-state-legend"><span className="scenario-state-tag scenario-baseline-tag">BASELINE <small>persisted snapshot</small></span><span className="scenario-state-tag scenario-removed-tag">REMOVED <small>selected targets</small></span><span className="scenario-state-tag scenario-affected-tag">AFFECTED <small>reachability changed</small></span><Link href="/infrastructure">OPEN INFRASTRUCTURE GRAPH ↗</Link></div><div className="scenario-metric-grid"><div><span>COMPONENTS</span><strong>{metrics.baseline.component_count} → {metrics.scenario.component_count}</strong></div><div><span>LARGEST COMPONENT</span><strong>{metrics.baseline.largest_component_size} → {metrics.scenario.largest_component_size}</strong></div><div><span>REACHABLE PAIRS</span><strong>{metrics.path_analysis.baseline_reachable_pairs} → {metrics.path_analysis.scenario_reachable_pairs}</strong></div><div><span>RESILIENCE (STRUCTURAL)</span><strong>{metrics.resilience.score.toFixed(1)} <em>{metrics.resilience.delta_from_intact.toFixed(1)}</em></strong></div></div>{baselineSnapshot && modifiedSnapshot && <div className="scenario-snapshot-grid"><SnapshotGraph state="baseline" snapshot={baselineSnapshot} removedNodeIds={metrics.removed_node_ids} removedEdgeIds={metrics.removed_edge_ids} affectedNodeIds={metrics.disconnected_node_ids} /><SnapshotGraph state="modified" snapshot={modifiedSnapshot} removedNodeIds={metrics.removed_node_ids} removedEdgeIds={metrics.removed_edge_ids} affectedNodeIds={metrics.disconnected_node_ids} /></div>}<div className="scenario-result-columns"><div><h3>What changed</h3><p>{run.result.evidence.what_changed as string}</p><dl><dt>REMOVED NODES</dt><dd>{metrics.removed_node_ids.length ? metrics.removed_node_ids.join(", ") : "none"}</dd><dt>REMOVED EDGES</dt><dd>{metrics.removed_edge_ids.length ? metrics.removed_edge_ids.join(", ") : "none"}</dd><dt>AFFECTED / DISCONNECTED</dt><dd>{metrics.disconnected_node_ids.length ? metrics.disconnected_node_ids.join(", ") : "none observed"}</dd><dt>CHANGED PATHS</dt><dd>{metrics.path_analysis.changed_path_count} of {metrics.path_analysis.pairs_evaluated} bounded pairs</dd></dl></div><div><h3>Formula & limits</h3><p>Score = 100 × (0.45 × surviving reachability + 0.35 × largest-component fraction + 0.20 × alternate-route preservation − 0.10 × path-inflation penalty).</p><dl><dt>BASELINE HASH</dt><dd><code>{formatHash(run.baseline_graph_hash)}</code></dd><dt>MODIFIED HASH</dt><dd><code>{formatHash(run.modified_graph_hash)}</code></dd><dt>ALTERNATE ROUTES</dt><dd>{metrics.alternate_routes.baseline_alternate_route_edges} → {metrics.alternate_routes.scenario_alternate_route_edges}</dd><dt>NON-CLAIM</dt><dd>No outage, service, economic, logistical, or causal claim.</dd></dl></div></div></section>}
     </>}
   </div>;
 }

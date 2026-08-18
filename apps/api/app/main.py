@@ -402,9 +402,6 @@ async def assessments_recompute(
             asset_limit=request.asset_limit,
         )
         await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        raise HTTPException(status_code=409, detail="Scenario conflicts with an existing persisted definition") from exc
     except LookupError as exc:
         await session.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -685,7 +682,7 @@ async def scenarios_create(
         await session.refresh(scenario, ["targets"])
     except IntegrityError as exc:
         await session.rollback()
-        raise HTTPException(status_code=409, detail="Scenario run conflicts with an existing persisted run") from exc
+        raise HTTPException(status_code=409, detail="Scenario definition conflicts with an existing persisted definition") from exc
     except LookupError as exc:
         await session.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -732,6 +729,9 @@ async def scenarios_run(
         run = await execute_scenario(session, scenario_id)
         await session.commit()
         await session.refresh(run, ["result"])
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Scenario run conflicts with an existing persisted run") from exc
     except LookupError as exc:
         await session.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
