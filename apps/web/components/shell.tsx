@@ -29,7 +29,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <Link className="brand" href="/" aria-label="SIGNALWAKE home"><SignalMark size={21} /><span>SIGNAL<span className="brand-accent">WAKE</span></span></Link>
       <div className="topbar-divider" />
       <div className="topbar-context"><span className="context-kicker">OPERATIONS CONSOLE</span><span className="context-slash">/</span><span>{pathname === "/" ? "Operational Map" : navItems.find((item) => item.href === pathname)?.label ?? "Signal surface"}</span></div>
-      <div className="topbar-actions"><span className="connection"><span className="connection-dot" /> API CONNECTED</span><span className="clock">UTC {utcClock}</span></div>
+      <div className="topbar-actions"><span className="connection"><span className="connection-dot" /> API STATUS: CONNECTED</span><span className="clock">UTC {utcClock}</span><span className="topbar-utility" aria-hidden="true">/</span><span className="topbar-utility">LIVE SURFACE</span></div>
     </header>
     <div className="body-shell">
       <aside className="side-nav" aria-label="Primary navigation">
