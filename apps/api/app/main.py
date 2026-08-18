@@ -34,6 +34,9 @@ from app.graph_repository import (
 from app.ingest import ensure_source, ingest_once, persist_normalized
 from app.logging import configure_logging
 from app.models import Event, InfrastructureRelationshipType, Scenario, Source
+from app.replay import replay_compare as build_replay_compare
+from app.replay import replay_state as build_replay_state
+from app.replay import replay_timeline as build_replay_timeline
 from app.repository import (
     get_event,
     get_infrastructure,
@@ -68,6 +71,9 @@ from app.schemas import (
     HealthResponse,
     InfrastructureListResponse,
     InfrastructureResponse,
+    ReplayCompareResponse,
+    ReplayStateResponse,
+    ReplayTimelineResponse,
     ScenarioCreateRequest,
     ScenarioGraphResponse,
     ScenarioListResponse,
@@ -203,6 +209,47 @@ async def health(session: AsyncSession = Depends(session_dependency)) -> HealthR
 async def sources(session: AsyncSession = Depends(session_dependency)) -> list[SourceResponse]:
     result = await session.execute(select(Source).order_by(Source.key))
     return [source_response(item) for item in result.scalars().all()]
+
+
+@app.get("/replay/timeline", response_model=ReplayTimelineResponse, tags=["replay"])
+async def replay_timeline(
+    start_time: datetime = Query(..., description="Inclusive aware UTC range start"),
+    end_time: datetime = Query(..., description="Inclusive aware UTC range end"),
+    limit: int = Query(100, ge=1, le=100),
+    session: AsyncSession = Depends(session_dependency),
+) -> ReplayTimelineResponse:
+    try:
+        result = await build_replay_timeline(session, start_time, end_time, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ReplayTimelineResponse.model_validate(result)
+
+
+@app.get("/replay/state", response_model=ReplayStateResponse, tags=["replay"])
+async def replay_state(
+    at: datetime = Query(..., description="Inclusive aware UTC knowledge-time boundary"),
+    limit: int = Query(50, ge=1, le=100),
+    session: AsyncSession = Depends(session_dependency),
+) -> ReplayStateResponse:
+    try:
+        result = await build_replay_state(session, at, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ReplayStateResponse.model_validate(result)
+
+
+@app.get("/replay/compare", response_model=ReplayCompareResponse, tags=["replay"])
+async def replay_compare(
+    from_time: datetime = Query(..., description="Earlier inclusive aware UTC boundary"),
+    to_time: datetime = Query(..., description="Later inclusive aware UTC boundary"),
+    limit: int = Query(50, ge=1, le=100),
+    session: AsyncSession = Depends(session_dependency),
+) -> ReplayCompareResponse:
+    try:
+        result = await build_replay_compare(session, from_time, to_time, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ReplayCompareResponse.model_validate(result)
 
 
 @app.get("/events", response_model=EventListResponse, tags=["events"])

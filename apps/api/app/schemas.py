@@ -335,3 +335,45 @@ class HealthResponse(BaseModel):
     database: str
     sources: list[SourceResponse]
     generated_at: datetime
+
+
+class ReplayTimelineMarker(BaseModel):
+    timestamp: datetime
+    recorded_at: datetime
+    kind: str
+    id: str
+    identity: str
+    label: str
+    change: str
+
+
+class ReplayTimelineResponse(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    items: list[ReplayTimelineMarker]
+    total: int
+    limit: int
+    truncated: bool = False
+
+
+class ReplayStateResponse(BaseModel):
+    timestamp: datetime
+    as_of: datetime
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    assessments: list[dict[str, Any]] = Field(default_factory=list)
+    infrastructure: list[dict[str, Any]] = Field(default_factory=list)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    infrastructure_sources: list[dict[str, Any]] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)
+    limit: int
+    truncated: bool = False
+    semantics: dict[str, str] = Field(default_factory=dict)
+
+
+class ReplayCompareResponse(BaseModel):
+    from_time: datetime
+    to_time: datetime
+    summary: dict[str, int] = Field(default_factory=dict)
+    changes: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    limit: int
+    truncated: bool = False
