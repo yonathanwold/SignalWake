@@ -10,7 +10,7 @@ The first slice is intentionally honest about its boundary:
 - `REFERENCE` means an imported infrastructure asset whose geometry and metadata came from a named public source. It is intentionally separate from live event observations.
 - Infrastructure Graph is a bounded, API-backed workspace over persisted Phase 3 relationships. Scenario Lab is a separate second-order graph comparison surface. Historical Replay, Source Provenance, and System Health are implemented API-backed workspaces over their persisted/versioned data; they show honest empty/error states when the API or data is unavailable.
 - Phase 4 assessments are a separate `SIGNALWAKE DERIVED ASSESSMENT` layer. They correlate an event with source-provided infrastructure using deterministic geometry predicates, bounded radius checks, and bounded structural graph traversal. They are exposure-prioritization scores, not outage, economic-loss, causal, or operational dependency predictions.
-- The Operational Map uses MapLibre GL JS with local, token-free GeoJSON rendering for the same canonical events as the feed; its SVG surface is an explicit runtime fallback only if MapLibre initialization fails.
+- The Operational Map uses MapLibre GL JS with a public, token-free CARTO dark OSM raster basemap and GeoJSON overlays for the same canonical events as the feed. The map shows an honest basemap-unavailable state if the public tile service cannot load; it never substitutes a synthetic geographic drawing. CARTO and OpenStreetMap attribution is displayed in the map controls, and public tile availability/rate limits apply.
 
 ## Run locally
 

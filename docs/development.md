@@ -86,7 +86,7 @@ Adapters send a descriptive user-agent, enforce a timeout, retry transient 429/5
 
 ## Browser verification
 
-The Operational Map mounts MapLibre GL JS with a self-contained dark style, local worker assets, and GeoJSON sources for canonical event points, polygons, and infrastructure reference assets. It needs no token or external tile service. The existing SVG map remains an explicit fallback if MapLibre initialization fails, and the UI labels which runtime is active.
+The Operational Map mounts MapLibre GL JS with local worker assets, a public token-free CARTO `dark_all` OpenStreetMap raster basemap, and GeoJSON sources for canonical event points, polygons, and infrastructure reference assets. The map is centered on the geographic United States at `[-98.5795, 39.8283]` and starts at zoom `4`. Source geometry is passed to MapLibre unchanged; latitude/longitude is used only when an API record has no geometry. MapLibre's visible attribution names OpenStreetMap and CARTO. Public tile availability and rate limits apply. If the tile service or map runtime fails, the UI reports `BASEMAP UNAVAILABLE` and does not render a synthetic map fallback.
 
 ## Infrastructure importer
 
