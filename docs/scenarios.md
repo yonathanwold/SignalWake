@@ -26,6 +26,10 @@ Target existence and kind are checked before persistence. Duplicate targets,
 empty selections, mixed node/edge selections, unsupported types, and selections
 over the safe bound are rejected. An optional duration is retained as an
 assumption for reproducibility; it does not change the static topology.
+Scenario creation also rejects a persisted graph with more than 200 nodes,
+before loading the full graph into memory. This keeps the baseline snapshot and
+the structural comparison within the explicit Scenario Lab safety boundary;
+the current graph must be narrowed/imported in a smaller bounded slice first.
 
 ## Execution
 
@@ -82,8 +86,10 @@ modeled relationship graph.
 The Scenario Lab uses real `/graph/nodes`, `/graph/edges`, and scenario API
 responses. It does not substitute demo scenario results when the API is down.
 The graph result endpoint accepts `state=baseline|modified` and caps returned
-nodes at 200 (and edges at four times that cap). GET requests are side-effect
-free; only the POST create and POST run operations write scenario projections.
+nodes at 200 (and edges at four times that cap). The creation-time baseline
+loader uses the same 200-node safety bound and returns HTTP 422 when the
+persisted graph exceeds it. GET requests are side-effect-free; only the POST
+create and POST run operations write scenario projections.
 
 Current relationship facts are source-backed or deterministic derivations from
 the Phase 2 fixtures/imports. They are not operational dependency semantics,

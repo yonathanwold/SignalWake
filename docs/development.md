@@ -63,6 +63,9 @@ articulation, repeatability, persistence, API validation, and no-mutation
 behavior. The score and all structural metrics are explained in
 [`docs/scenarios.md`](scenarios.md); they do not represent outage, service,
 economic, logistical, or causal predictions.
+Scenario creation rejects persisted graphs above 200 nodes with HTTP 422 before
+loading the baseline; scenario graph responses use the same 200-node cap and
+an 800-edge response bound.
 
 ## Adapter behavior
 

@@ -350,11 +350,17 @@ async def _load_baseline(session: AsyncSession) -> tuple[list[InfrastructureAsse
                 select(InfrastructureAsset)
                 .options(joinedload(InfrastructureAsset.source))
                 .order_by(InfrastructureAsset.id)
+                .limit(MAX_GRAPH_NODES + 1)
             )
         )
         .unique()
         .scalars()
     )
+    if len(assets) > MAX_GRAPH_NODES:
+        raise ValueError(
+            f"Scenario graph exceeds the safe node bound of {MAX_GRAPH_NODES}; "
+            "narrow the persisted graph before creating a scenario"
+        )
     asset_ids = {asset.id for asset in assets}
     relationships = [
         relationship

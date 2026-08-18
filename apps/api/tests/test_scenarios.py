@@ -132,3 +132,29 @@ async def test_scenario_persistence_api_and_invalid_inputs(db_factory):
         assert await session.scalar(select(func.count(InfrastructureRelationship.id))) == original_edge_count
         assert await session.scalar(select(func.count(Scenario.id))) == 1
         assert await session.scalar(select(func.count(ScenarioRun.id))) == 1
+
+
+@pytest.mark.asyncio
+async def test_scenario_rejects_graph_above_safe_node_bound(db_factory):
+    async with db_factory() as session:
+        await import_payload(
+            session,
+            "fra_rail",
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    _line(f"RAIL-{index:03d}", [[-77.0 + index * 0.01, 37.0], [-76.999 + index * 0.01, 37.0]])
+                    for index in range(201)
+                ],
+            },
+        )
+        first_asset = await session.scalar(select(InfrastructureAsset).order_by(InfrastructureAsset.id))
+        assert first_asset is not None
+    app.state.session_factory = db_factory
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/scenarios",
+            json={"scenario_type": "ASSET_UNAVAILABLE", "target_node_ids": [first_asset.id]},
+        )
+        assert response.status_code == 422
+        assert "safe node bound of 200" in response.json()["detail"]
