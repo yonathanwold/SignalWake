@@ -98,6 +98,30 @@ Confidence is `null` because available facts do not support a probability of
 outage or consequence. Recompute upserts stable keys and removes stale rows
 only for the selected event and methodology.
 
+Phase 5 adds a separate Scenario Lab projection. It snapshots the current
+graph, records explicit node/edge targets, and compares an in-memory modified
+graph without mutating assets or relationship rows:
+
+```text
+REFERENCE assets + persisted graph edges
+    | POST /scenarios (validate targets + snapshot baseline)
+    v
+Scenario + ScenarioTarget
+    | POST /scenarios/{id}/runs (deterministic in-memory removals)
+    v
+ScenarioRun + ScenarioResult (baseline/modified hashes, metrics, evidence)
+    | GET /scenario-runs/{id}/graph
+    v
+Scenario Lab baseline / removed / affected / derived-second-order views
+```
+
+The supported mutations are one asset, one relationship, or multiple assets.
+The graph remains undirected; results use components, bounded BFS shortest
+paths, alternate-route checks, and Tarjan articulation points. The
+`second-order-v1` score is a transparent structural comparison and never an
+outage, service, economic, logistical, or causal prediction. Full assumptions,
+formula, safe bounds, and reproducibility rules are in `docs/scenarios.md`.
+
 Current node types are `port` (BTS Port Facilities) and `rail_corridor` (FRA
 Rail Lines). Current relationship types are:
 
@@ -137,6 +161,11 @@ and event/type/asset/status/methodology indexes. JSON evidence/components are
 validated by the typed API and retain predicates, distances/radii, graph paths,
 relationship IDs, formula/weights, and source fact IDs.
 
+`005_scenarios.sql` stores scenario definitions, explicit node/edge target
+rows, deterministic run keys, and baseline/modified result snapshots. Scenario
+tables are a derived projection and do not own or mutate infrastructure facts
+or persisted graph relationships.
+
 ## API contract
 
 - `GET /health` — service, database, and source freshness status.
@@ -147,6 +176,7 @@ relationship IDs, formula/weights, and source fact IDs.
 - `GET /infrastructure/{id}` — one reference asset with geometry, source attribution/license, timestamps, and provenance.
 - `GET /graph/nodes` — bounded/paginated graph nodes with type, region, source, and structural metric filters.
 - `GET /graph/nodes/{id}` — one asset plus graph metrics.
+- `GET /graph/edges` — bounded relationship choices for graph/scenario views.
 - `GET /graph/nodes/{id}/neighbors` — bounded depth traversal; current edges are undirected, so `direction=in/out` is rejected.
 - `GET /graph/paths` — shortest path within a caller-supplied hop bound; missing nodes and no-path cases are 404.
 - `GET /graph/subgraph` — bounded root/depth/type/region/relationship subgraph.
@@ -156,6 +186,11 @@ relationship IDs, formula/weights, and source fact IDs.
 - `GET /assessments/{id}` — one derived assessment with evidence and named score components.
 - `GET /events/{id}/assessments` and `GET /infrastructure/{id}/assessments` — scoped assessment views.
 - `POST /assessments/recompute` — explicit event-scoped upsert/cleanup with validated radius, depth, and asset bounds.
+- `POST /scenarios` — validate targets and persist a baseline graph snapshot.
+- `GET /scenarios`, `GET /scenarios/{id}` — side-effect-free scenario definitions.
+- `POST /scenarios/{id}/runs` — explicit deterministic in-memory graph mutation and persisted result; repeated calls are idempotent for the same input/baseline/methodology.
+- `GET /scenario-runs/{id}`, `GET /scenario-runs/{id}/result` — run evidence, metrics, hashes, and formula components.
+- `GET /scenario-runs/{id}/graph?state=baseline|modified` — bounded graph snapshot for visualization.
 
 The browser's map markers and feed rows are both projections of the same `Event` response. Infrastructure layers and the reference inspector are projections of `/infrastructure`; the browser does not ship a full static dataset. MapLibre uses separate GeoJSON sources for events and infrastructure. The SVG renderer remains a fallback.
 
@@ -166,7 +201,8 @@ PostgreSQL uses `ST_Intersects(geometry, ST_MakeEnvelope(..., 4326))` for viewpo
 Infrastructure assets are reference facts only. Assessments are deterministic
 exposure prioritization, not predicted impact. SIGNALWAKE does not claim
 outages, economic losses, real-world operational causality, or
-upstream/downstream dependency. Scenario Lab remains out of scope for Phase 4.
+upstream/downstream dependency. Scenario Lab is a separate structural graph
+comparison layer; it does not add those semantics.
 
 Assessment recompute is deliberately bounded and event-specific. SQLite uses
 the same pure-Python geometry helpers as fixture tests but is not a

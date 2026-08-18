@@ -5,7 +5,7 @@
 - `apps/api/app` — FastAPI app, domain models, adapters, importer, repository, and spatial services.
 - `apps/api/tests` — fixture-only adapter, infrastructure, spatial, ingestion, and API tests; no external calls.
 - `apps/web/app` — Next.js App Router routes.
-- `apps/web/components` — shared map, feed, shell, and future-route UI.
+- `apps/web/components` — shared map, feed, shell, graph, and Scenario Lab UI.
 - `apps/web/lib` — canonical frontend types and API/demo data access.
 - `infra/docker-compose.yml` — Postgres/PostGIS target service.
 
@@ -47,7 +47,22 @@ python -m app.assessments --event-id <event-id> --radius-km 50 --depth 2
 The API equivalent is `POST /assessments/recompute`; bounded list/detail and
 event/asset views are under `/assessments`, `/events/{id}/assessments`, and
 `/infrastructure/{id}/assessments`. Stale rows are deleted only for the
-selected event and methodology version. Scenario Lab is not part of Phase 4.
+selected event and methodology version. Scenario Lab is a separate Phase 5
+projection and does not rewrite this assessment layer.
+
+## Scenario Lab
+
+Scenario definitions and runs live in `app/scenarios.py` and the
+`005_scenarios.sql` migration. A scenario snapshots the sorted undirected graph
+at creation time, stores ordered node/edge targets, and executes only an
+in-memory removal. The explicit POST run is deterministic and idempotent for
+the same scenario input, baseline hash, and `second-order-v1` methodology.
+Tests use the exact fixture graph engine and imported rail fixtures to verify
+single-node, single-edge, multi-node, component, path, alternate-route,
+articulation, repeatability, persistence, API validation, and no-mutation
+behavior. The score and all structural metrics are explained in
+[`docs/scenarios.md`](scenarios.md); they do not represent outage, service,
+economic, logistical, or causal predictions.
 
 ## Adapter behavior
 
