@@ -1,0 +1,16 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "https://api.weather.gov/stations/KDCA/observations/2026-08-18T14:00:00Z",
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [-77.0377, 38.8512]},
+      "properties": {
+        "station": "https://api.weather.gov/stations/KDCA",
+        "timestamp": "2026-08-18T14:00:00Z",
+        "textDescription": "Mostly Cloudy",
+        "temperature": {"value": 25.6, "unitCode": "wmoUnit:degC"}
+      }
+    }
+  ]
+}

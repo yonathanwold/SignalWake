@@ -93,7 +93,10 @@ class SourceKind(str, enum.Enum):
 
 class EventType(str, enum.Enum):
     WEATHER_ALERT = "weather_alert"
+    WEATHER_OBSERVATION = "weather_observation"
     EARTHQUAKE = "earthquake"
+    WATER_LEVEL_OBSERVATION = "water_level_observation"
+    TROPICAL_SYSTEM = "tropical_system"
 
 
 class Severity(str, enum.Enum):

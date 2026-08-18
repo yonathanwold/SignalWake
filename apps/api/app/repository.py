@@ -22,6 +22,7 @@ from app.schemas import (
     SourceResponse,
 )
 from app.spatial import geometry_intersects_bbox, parse_bbox
+from app.temporal import TemporalWindow, event_in_window
 
 
 def _health(source: Source, now: datetime | None = None) -> str:
@@ -188,6 +189,7 @@ async def list_events(
     severity: str | None = None,
     start_time: datetime | None = None,
     end_time: datetime | None = None,
+    window: TemporalWindow | None = None,
     limit: int = 50,
     cursor: int = 0,
 ) -> tuple[list[EventResponse], int, int | None]:
@@ -202,12 +204,16 @@ async def list_events(
     if severity:
         statement = statement.where(Event.severity == severity)
         count_statement = count_statement.where(Event.severity == severity)
-    if start_time:
-        statement = statement.where(Event.observed_at >= start_time)
-        count_statement = count_statement.where(Event.observed_at >= start_time)
-    if end_time:
-        statement = statement.where(Event.observed_at <= end_time)
-        count_statement = count_statement.where(Event.observed_at <= end_time)
+    if window is not None:
+        statement = event_in_window(statement, window)
+        count_statement = event_in_window(count_statement, window)
+    else:
+        if start_time:
+            statement = statement.where(Event.observed_at >= start_time)
+            count_statement = count_statement.where(Event.observed_at >= start_time)
+        if end_time:
+            statement = statement.where(Event.observed_at <= end_time)
+            count_statement = count_statement.where(Event.observed_at <= end_time)
     statement = apply_bbox(statement, bbox)
     count_statement = apply_bbox(count_statement, bbox)
     total = int((await session.execute(count_statement)).scalar_one())

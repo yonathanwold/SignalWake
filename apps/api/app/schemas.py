@@ -105,6 +105,54 @@ class EventListResponse(BaseModel):
     total: int
     limit: int
     next_cursor: str | None = None
+    window_start: datetime
+    window_end: datetime
+    window_hours: int = 48
+    temporal_semantics: str
+    generated_at: datetime
+
+
+class LayerCatalogItem(BaseModel):
+    key: str
+    name: str
+    category: str
+    geometry_kind: str
+    data_kind: str
+    temporal_semantics: str
+    applies_to_48h_window: bool
+    endpoint: str
+    status: str
+    adapter_version: str
+    last_refresh: datetime | None = None
+    counts: dict[str, int] = Field(default_factory=dict)
+    source_key: str | None = None
+    error: str | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class LayerCatalogResponse(BaseModel):
+    generated_at: datetime
+    window_start: datetime
+    window_end: datetime
+    window_hours: int = 48
+    temporal_semantics: str
+    items: list[LayerCatalogItem]
+
+
+class LayerDataResponse(BaseModel):
+    key: str
+    status: str
+    generated_at: datetime
+    window_start: datetime
+    window_end: datetime
+    window_hours: int = 48
+    temporal_semantics: str
+    geometry_kind: str
+    feature_count: int
+    bounded_limit: int
+    features: list[dict[str, Any]] = Field(default_factory=list)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
 
 
 class InfrastructureProvenance(BaseModel):

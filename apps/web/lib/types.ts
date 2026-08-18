@@ -1,4 +1,4 @@
-export type EventType = "weather_alert" | "earthquake";
+export type EventType = "weather_alert" | "earthquake" | "water_level_observation" | "tropical_system" | string;
 export type Severity = "info" | "advisory" | "watch" | "warning" | "critical";
 
 export type Provenance = {
@@ -54,6 +54,35 @@ export type Source = {
   last_records_rejected?: number | null;
   health: "HEALTHY" | "STALE" | "ERROR" | "UNKNOWN";
   operational_state?: "ACTIVE" | "DEGRADED" | "DOWN" | "UNKNOWN";
+};
+
+export type LayerStatus = "LIVE" | "NEAR_REAL_TIME" | "REFERENCE" | "REQUIRES_CREDENTIALS" | "NOT_CONNECTED" | "ERROR" | "DEGRADED" | string;
+
+export type LayerCatalogItem = {
+  key: string;
+  name: string;
+  category: string;
+  geometry_kind: string;
+  data_kind: string;
+  temporal_semantics: string;
+  applies_to_48h_window: boolean;
+  endpoint: string;
+  status: LayerStatus;
+  adapter_version: string;
+  last_refresh: string | null;
+  counts: Record<string, number>;
+  source_key: string | null;
+  error: string | null;
+  provenance: Record<string, unknown>;
+};
+
+export type LayerCatalogResponse = {
+  generated_at: string;
+  window_start: string;
+  window_end: string;
+  window_hours: number;
+  temporal_semantics: string;
+  items: LayerCatalogItem[];
 };
 
 export type HealthSource = {

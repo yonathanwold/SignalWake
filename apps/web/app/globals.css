@@ -175,6 +175,7 @@ a { color: inherit; }
 .map-section { border-right: 0; }
 .map-toolbar { height: 45px; padding: 0 14px; border-color: var(--line-strong); background: #0a0a0a; }
 .map-title { color: var(--text); font: 700 13px var(--sans); letter-spacing: .03em; }
+.map-title small { margin-left: 8px; color: var(--teal); font: 8px var(--mono); letter-spacing: .08em; font-weight: 400; }
 .map-title svg { color: var(--text); }
 .map-toolbar-right { gap: 17px; color: var(--faint); font: 9px var(--mono); }
 .map-zoom span { color: var(--text); }
@@ -187,6 +188,7 @@ a { color: inherit; }
 .map-runtime-note { top: 13px; left: 13px; padding: 7px 9px; color: var(--muted); font: 9px var(--mono); letter-spacing: .06em; }
 .fallback-detail { color: var(--faint); }
 .map-layer-rail { top: 13px; left: 13px; width: 190px; margin-top: 37px; }
+.map-layer-rail { max-height: min(72%, 470px); overflow-y: auto; }
 .rail-label { padding: 10px 10px 7px; color: var(--faint); font: 9px var(--mono); letter-spacing: .1em; }
 .rail-label-reference { border-color: var(--line); color: var(--faint); }
 .layer-control { padding: 8px 10px; color: var(--muted); font: 9px var(--mono); }

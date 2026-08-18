@@ -197,7 +197,9 @@ time and never by the mutable current projection.
 
 - `GET /health` — service, database, and source freshness status.
 - `GET /sources` — source registry with latest fetch status and freshness.
-- `GET /events` — latest-first events with `bbox`, `source`, `type`, `severity`, `start_time`, `end_time`, `limit`, `cursor`, and `page` filters.
+- `GET /sources/catalog` or `GET /layers` — catalog of live, near-real-time, reference, credentialed, and unconnected families with explicit geometry, freshness, and provenance metadata.
+- `GET /layers/{key}/data` — bounded GeoJSON-like projection for a connected event/reference layer; unavailable layers return no features and their honest status.
+- `GET /events` — latest-first events with `bbox`, `source`, `type`, `severity`, `start_time`, `end_time`, `limit`, `cursor`, and `page` filters. The default and maximum operational window is the past 48 hours UTC; observed/effective/received times and overlapping validity intervals are included.
 - `GET /events/{id}` — event detail including provenance and raw observation reference.
 - `GET /infrastructure` — bounded reference assets with `bbox`, `type`, `source`, `region`, `limit`, `cursor`, and `page` filters.
 - `GET /infrastructure/{id}` — one reference asset with geometry, source attribution/license, timestamps, and provenance.
@@ -222,7 +224,7 @@ time and never by the mutable current projection.
 - `GET /replay/state` — bounded UTC as-of projection with event/knowledge-time fields.
 - `GET /replay/compare` — bounded A/B change lists between two knowledge boundaries.
 
-The browser's map markers and feed rows are both projections of the same `Event` response. Infrastructure layers and the reference inspector are projections of `/infrastructure`; the browser does not ship a full static dataset. MapLibre uses separate GeoJSON sources for events and infrastructure. The SVG renderer remains a fallback.
+The browser's map markers and feed rows are both projections of the same bounded `Event` response. The map also renders a catalog-driven rail of connected live layers and honest unavailable/reference states; it does not create records for catalog rows without data. Infrastructure layers and the reference inspector are projections of `/infrastructure`; the browser does not ship a full static dataset. MapLibre uses separate GeoJSON sources for events and infrastructure, with source-specific live toggles. The 48-hour UTC window is shown in the map toolbar.
 
 ## Spatial behavior and limits
 
@@ -233,6 +235,11 @@ exposure prioritization, not predicted impact. SIGNALWAKE does not claim
 outages, economic losses, real-world operational causality, or
 upstream/downstream dependency. Scenario Lab is a separate structural graph
 comparison layer; it does not add those semantics.
+
+The candidate signal surface is likewise descriptive only: it may expose
+source-backed counts, freshness, geometry, and deterministic assessment
+evidence. Validated prediction, causal outage inference, probability scores,
+and ML forecasting are not implemented.
 
 Assessment recompute is deliberately bounded and event-specific. SQLite uses
 the same pure-Python geometry helpers as fixture tests but is not a

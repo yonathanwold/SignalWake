@@ -1,4 +1,4 @@
-import type { CanonicalEvent, InfrastructureAsset, InfrastructureAssessment, Source } from "./types";
+import type { CanonicalEvent, InfrastructureAsset, InfrastructureAssessment, LayerCatalogItem, Source } from "./types";
 
 const portSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::port-facilities/about";
 const railSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::rail-lines/about";
@@ -84,18 +84,30 @@ export const demoSources: Source[] = [
   { id: "demo-source-usgs", key: "usgs", name: "United States Geological Survey", kind: "USGS", endpoint: usgsSourceUrl, active: true, adapter_version: "1.0.0", last_success_at: "2026-08-17T14:31:05Z", last_attempt_at: "2026-08-17T14:31:05Z", last_error: null, last_http_status: 200, freshness_seconds: 0, health: "HEALTHY" },
 ];
 
-export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; infrastructure: InfrastructureAsset[]; assessments: InfrastructureAssessment[]; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
+const catalogLabels: Array<[string, string, string, string]> = [
+  ["nws_alerts", "NWS active alerts", "LIVE", "weather"], ["nws_forecasts", "NWS forecasts", "NOT_CONNECTED", "weather"], ["nws_observations", "NWS observations", "NOT_CONNECTED", "weather"], ["nws_storm_reports", "NWS storm reports", "NOT_CONNECTED", "weather"],
+  ["usgs_earthquakes", "USGS earthquakes", "LIVE", "seismic"], ["usgs_water", "USGS water services", "NEAR_REAL_TIME", "hydrology"], ["nasa_firms", "NASA FIRMS active fire", "REQUIRES_CREDENTIALS", "fire"], ["airnow", "AirNow air quality", "REQUIRES_CREDENTIALS", "air_quality"], ["nhc_systems", "NHC current tropical systems", "NEAR_REAL_TIME", "tropical_weather"], ["noaa_coops", "NOAA CO-OPS water levels", "NOT_CONNECTED", "coastal"],
+  ["bts", "BTS transportation assets", "REFERENCE", "transportation"], ["fra", "FRA rail network", "REFERENCE", "transportation"], ["faa", "FAA facilities and advisories", "NOT_CONNECTED", "aviation"], ["energy", "Energy infrastructure", "NOT_CONNECTED", "energy"], ["dams", "National dam inventory", "REFERENCE", "water_infrastructure"], ["hospitals", "Hospitals", "REFERENCE", "public_safety"], ["shelters", "Emergency shelters", "NOT_CONNECTED", "public_safety"], ["public_safety", "Public safety facilities", "NOT_CONNECTED", "public_safety"], ["mrms", "NOAA MRMS precipitation", "NOT_CONNECTED", "weather"], ["lightning", "NOAA lightning", "NOT_CONNECTED", "weather"], ["snow_temperature", "NOAA snow and temperature", "NOT_CONNECTED", "weather"], ["drought_soil", "Drought and soil moisture", "REFERENCE", "environment"], ["land_elevation", "USGS elevation", "REFERENCE", "terrain"], ["watersheds_hydrography", "USGS watersheds and hydrography", "REFERENCE", "hydrology"], ["census", "U.S. Census geography", "REFERENCE", "demographics"], ["fema_nri", "FEMA National Risk Index", "REFERENCE", "risk"], ["fema_declarations", "FEMA declarations", "NOT_CONNECTED", "emergency_management"], ["social_vulnerability", "CDC/ATSDR social vulnerability", "REFERENCE", "vulnerability"], ["cdc_wastewater", "CDC wastewater surveillance", "NOT_CONNECTED", "public_health"],
+];
+
+export const demoLayerCatalog: LayerCatalogItem[] = catalogLabels.map(([key, name, status, category]) => ({
+  key, name, category, geometry_kind: "source geometry", data_kind: "catalog metadata only", temporal_semantics: "source timestamp", applies_to_48h_window: status !== "REFERENCE", endpoint: "", status, adapter_version: "1.0.0", last_refresh: null, counts: {}, source_key: ({ nws_alerts: "nws", nws_observations: "nws_observations", usgs_earthquakes: "usgs", usgs_water: "usgs_water", nhc_systems: "nhc" } as Record<string, string>)[key] ?? null, error: null, provenance: {},
+}));
+
+export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; infrastructure: InfrastructureAsset[]; assessments: InfrastructureAssessment[]; layers: LayerCatalogItem[]; windowStart: string; windowEnd: string; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
   try {
-    const [eventsResponse, sourcesResponse, infrastructureResponse] = await Promise.all([
+    const [eventsResponse, sourcesResponse, infrastructureResponse, catalogResponse] = await Promise.all([
       fetch(`${base}/events?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/sources`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/infrastructure?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
+      fetch(`${base}/sources/catalog`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
     ]);
-    if (!eventsResponse.ok || !sourcesResponse.ok || !infrastructureResponse.ok) throw new Error("API unavailable");
-    const eventBody = (await eventsResponse.json()) as { items: CanonicalEvent[] };
+    if (!eventsResponse.ok || !sourcesResponse.ok || !infrastructureResponse.ok || !catalogResponse.ok) throw new Error("API unavailable");
+    const eventBody = (await eventsResponse.json()) as { items: CanonicalEvent[]; window_start: string; window_end: string };
     const sourceBody = (await sourcesResponse.json()) as Source[];
     const infrastructureBody = (await infrastructureResponse.json()) as { items: InfrastructureAsset[] };
+    const catalogBody = (await catalogResponse.json()) as { items: LayerCatalogItem[] };
     let assessments: InfrastructureAssessment[] = [];
     try {
       const assessmentsResponse = await fetch(`${base}/assessments?limit=500`, { cache: "no-store", signal: AbortSignal.timeout(2200) });
@@ -107,8 +119,9 @@ export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources
       // Assessment data is optional to the source/event live path. The UI
       // keeps the derived panel empty and labeled when this endpoint is down.
     }
-    return { events: eventBody.items, sources: sourceBody, infrastructure: infrastructureBody.items, assessments, mode: "LIVE", fetchedAt: new Date().toISOString() };
+    return { events: eventBody.items, sources: sourceBody, infrastructure: infrastructureBody.items, assessments, layers: catalogBody.items, windowStart: eventBody.window_start, windowEnd: eventBody.window_end, mode: "LIVE", fetchedAt: new Date().toISOString() };
   } catch {
-    return { events: demoEvents, sources: demoSources, infrastructure: demoInfrastructure, assessments: [], mode: "DEMO", fetchedAt: new Date().toISOString() };
+    const now = new Date();
+    return { events: demoEvents, sources: demoSources, infrastructure: demoInfrastructure, assessments: [], layers: demoLayerCatalog, windowStart: new Date(now.getTime() - 48 * 3600_000).toISOString(), windowEnd: now.toISOString(), mode: "DEMO", fetchedAt: now.toISOString() };
   }
 }

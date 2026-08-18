@@ -1,5 +1,16 @@
 # Authoritative data sources
 
+## Operational time contract
+
+Operational/live event views use a durable UTC window of the past 48 hours.
+`GET /events` defaults to that window and accepts an explicit `start_time` /
+`end_time` range only when it is at most 48 hours. An event is included when
+its observed, effective, or received timestamp falls in the window, or when a
+source-supplied effective/expires validity interval overlaps it. This is a
+query boundary only: raw observations and append-only history are never
+deleted. Reference assets, static tiles, and replay routes are not silently
+converted into live events.
+
 ## National Weather Service
 
 - Endpoint: `https://api.weather.gov/alerts/active?status=actual`
@@ -7,6 +18,16 @@
 - Record identity: NWS alert `id` or `properties.id`.
 - Geometry: alert polygon when provided; point fallback from `geocode` is not fabricated.
 - Terms: NWS requests require a descriptive `User-Agent`; configure it through `SOURCE_USER_AGENT`.
+
+### Latest station observations
+
+- Endpoint: `https://api.weather.gov/observations?limit=500`
+- Format: GeoJSON FeatureCollection, bounded to 500 provider features.
+- Record identity: provider feature `id`.
+- Geometry: provider-supplied station Point only; no station coordinates are inferred.
+- Fields: station identifier, provider observation timestamp, text description,
+  and temperature when supplied. These normalize as `weather_observation`
+  events under source key `nws_observations`.
 
 ## United States Geological Survey
 
@@ -17,13 +38,47 @@
 - Magnitude: normalized to deterministic severity bands for the interface.
 - Coverage: rolling past-day summary feed; this is a bounded live window, not an unbounded history download.
 
+## Additional connected near-real-time adapters
+
+- **USGS water services** — a bounded Virginia instantaneous-value request is
+  normalized to point observations (`water_level_observation`) using the gauge
+  coordinates and provider timestamp. The adapter caps normalized rows and
+  records a source error instead of returning invented gauge locations.
+- **National Hurricane Center** — `CurrentStorms.json` is parsed when the
+  public endpoint returns its active-storm list. Only provider-supplied
+  positions and timestamps become `tropical_system` events; malformed or empty
+  responses are an honest source error/empty run.
+
+NWS alerts, NWS station observations, USGS earthquakes, USGS water, and NHC systems are persisted through
+the same idempotent raw-observation/event path. Startup still performs one
+bounded pass; it is not a scheduler.
+
+## Source and layer catalog
+
+`GET /sources/catalog` (also `GET /layers`) is the metadata registry for the
+broader operational map. It includes NWS forecasts/observations/storm reports,
+NASA FIRMS, AirNow, NOAA CO-OPS, BTS/FRA, FAA, energy, dams, hospitals,
+shelters/public safety, MRMS, lightning, snow/temperature, drought/soil,
+land/elevation, watersheds/hydrography, Census, FEMA NRI/declarations, social
+vulnerability, and CDC wastewater. Every row states its geometry/data kind,
+source URL, temporal semantics, adapter version, refresh/counts, and one of
+`LIVE`, `NEAR_REAL_TIME`, `REFERENCE`, `REQUIRES_CREDENTIALS`,
+`NOT_CONNECTED`, `DEGRADED`, or `ERROR`.
+
+`GET /layers/{key}/data?limit=...` is bounded to 500 features and returns
+GeoJSON-like source geometry, freshness/provenance, and the same 48-hour
+metadata. Credentialed, unconnected, and reference-only layers return an empty
+feature list with their status; SIGNALWAKE never emits placeholder dots or
+fake records. Large national datasets are represented as catalog/reference or
+tile metadata rather than downloaded into the browser.
+
 ## Startup ingestion behavior
 
-When `INGEST_ON_STARTUP=true` (the default), the API runs one bounded fetch/normalize/persist pass for NWS and USGS during startup. Each source records `last_attempt_at`, `last_success_at`, `last_http_status`, `last_error`, and `freshness_seconds`. Valid features become `LIVE` canonical events with their raw payload and provenance; malformed features are logged and skipped while the remaining features continue.
+When `INGEST_ON_STARTUP=true` (the default), the API runs one bounded fetch/normalize/persist pass for NWS alerts, NWS station observations, USGS earthquakes, USGS water, and NHC. Each source records `last_attempt_at`, `last_success_at`, `last_http_status`, `last_error`, and `freshness_seconds`. Valid features become `LIVE` canonical events with their raw payload and provenance; malformed features are logged and skipped while the remaining features continue.
 
 The web map requests `/events?limit=200`, matching the API's maximum event page size so the complete bounded source window can render without requesting unbounded history.
 
-The pass is idempotent by source-scoped record identity and payload hash. `USE_DEMO_DATA=true` is only a fallback: fixture rows are seeded for a source when its live fetch fails or produces no usable events, and never replace a source that produced successful `LIVE` events. No permanent queue or scheduler is included in Phase 1; a later worker can call the same service boundary. The API never fabricates freshness: unavailable values are represented as `null`/`UNKNOWN`, and a source error is surfaced as `ERROR`.
+The pass is idempotent by source-scoped record identity and payload hash. `USE_DEMO_DATA=true` is only a fallback for the NWS/USGS deterministic fixtures: fixture rows are seeded for a source when its live fetch fails or produces no usable events, and never replace a source that produced successful `LIVE` events. No permanent queue or scheduler is included; a later worker can call the same service boundary. The API never fabricates freshness: unavailable values are represented as `null`/`UNKNOWN`, and a source error is surfaced as `ERROR`.
 
 ## Infrastructure reference sources
 

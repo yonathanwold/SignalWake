@@ -1,13 +1,14 @@
 # SIGNALWAKE
 
-SIGNALWAKE is a real-time geospatial event intelligence foundation. It turns authoritative National Weather Service alerts and USGS earthquake observations into one canonical event model, then serves that model to a map-first web interface. Phase 2 adds persistent infrastructure reference data from public U.S. transportation datasets. Reference geometry is searchable and inspectable; it is not a disruption score, dependency graph, or impact prediction.
+SIGNALWAKE is a real-time geospatial event intelligence foundation. It turns authoritative National Weather Service alerts/station observations, USGS earthquake/water observations, and National Hurricane Center systems into one canonical event model, then serves that model to a map-first web interface. A source/layer catalog records the wider weather, hazard, infrastructure, health, and vulnerability families without pretending unavailable feeds are connected. Reference geometry is searchable and inspectable; it is not a disruption score, dependency graph, or impact prediction.
 
 The first slice is intentionally honest about its boundary:
 
-- `LIVE` means a successful startup fetch, normalization, and persistence pass from NWS or USGS.
+- `LIVE` means a successful startup fetch, normalization, and persistence pass from one of the five connected adapters: NWS alerts, NWS station observations, USGS earthquakes, USGS water, or NHC systems.
 - `DEMO` means deterministic fixture data used only when startup ingestion is disabled, a source has no usable live events, or the browser cannot reach the API.
 - `DERIVED` means normalized event fields such as severity and type; it does not mean an infrastructure impact prediction.
 - `REFERENCE` means an imported infrastructure asset whose geometry and metadata came from a named public source. It is intentionally separate from live event observations.
+- Operational event and map layers are restricted to a UTC past-48-hour window. Source/effective/observed timestamps and overlapping validity intervals are included; historical storage remains intact. `/sources/catalog` and `/layers/{key}/data` expose exact status and provenance for all listed families, and unavailable/credentialed/reference-only layers return no fake records.
 - Infrastructure Graph is a bounded, API-backed workspace over persisted Phase 3 relationships. Scenario Lab is a separate second-order graph comparison surface. Historical Replay, Source Provenance, and System Health are implemented API-backed workspaces over their persisted/versioned data; they show honest empty/error states when the API or data is unavailable.
 - Phase 4 assessments are a separate `SIGNALWAKE DERIVED ASSESSMENT` layer. They correlate an event with source-provided infrastructure using deterministic geometry predicates, bounded radius checks, and bounded structural graph traversal. They are exposure-prioritization scores, not outage, economic-loss, causal, or operational dependency predictions.
 - The Operational Map uses MapLibre GL JS with a public, token-free CARTO dark OSM raster basemap and GeoJSON overlays for the same canonical events as the feed. The map shows an honest basemap-unavailable state if the public tile service cannot load; it never substitutes a synthetic geographic drawing. CARTO and OpenStreetMap attribution is displayed in the map controls, and public tile availability/rate limits apply.
@@ -33,7 +34,7 @@ The first slice is intentionally honest about its boundary:
    npm.cmd run dev
    ```
 
-Open `http://localhost:3000`. By default the API performs one bounded real fetch from both authoritative sources during startup. With `USE_DEMO_DATA=true`, fixtures are used only per source when that live pass is unavailable or produces no usable events; set it to `false` to run without fixture fallback. The browser also falls back to clearly labeled deterministic demo events when it cannot reach the API.
+Open `http://localhost:3000`. By default the API performs one bounded real fetch from connected public adapters during startup. With `USE_DEMO_DATA=true`, fixtures are used only per NWS/USGS source when that live pass is unavailable or produces no usable events; set it to `false` to run without fixture fallback. The browser also falls back to clearly labeled deterministic demo events and catalog statuses when it cannot reach the API.
 
 ### Import infrastructure reference data
 

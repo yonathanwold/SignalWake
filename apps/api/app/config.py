@@ -12,9 +12,14 @@ class Settings(BaseSettings):
     ingest_on_startup: bool = True
     use_demo_data: bool = True
     nws_alerts_url: str = "https://api.weather.gov/alerts/active?status=actual"
+    nws_observations_url: str = "https://api.weather.gov/observations?limit=500"
     usgs_earthquake_url: str = (
         "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
     )
+    usgs_water_url: str = (
+        "https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=VA&parameterCd=00060&siteStatus=active"
+    )
+    nhc_url: str = "https://www.nhc.noaa.gov/CurrentStorms.json"
     source_user_agent: str = "signalwake-portfolio/0.1 (contact@example.com)"
     request_timeout_seconds: float = 15.0
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"

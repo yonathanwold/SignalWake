@@ -15,14 +15,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from app.adapters.nhc import NHCAdapter
 from app.adapters.nws import NWSAdapter
+from app.adapters.nws_observations import NWSObservationsAdapter
 from app.adapters.usgs import USGSAdapter
+from app.adapters.usgs_water import USGSWaterAdapter
 from app.assessments import (
     assessment_response,
     get_assessment,
     list_assessments,
     recompute_event_assessments,
 )
+from app.catalog import catalog_items, specs_by_key
 from app.config import Settings, get_settings
 from app.database import create_engine, init_db, session_factory
 from app.derivation import DerivationSettings, rebuild_derived_relationships
@@ -98,6 +102,8 @@ from app.schemas import (
     HealthSourcesResponse,
     InfrastructureListResponse,
     InfrastructureResponse,
+    LayerCatalogResponse,
+    LayerDataResponse,
     LineageResponse,
     ReplayCompareResponse,
     ReplayStateResponse,
@@ -110,6 +116,7 @@ from app.schemas import (
     ScenarioRunResponse,
     SourceResponse,
 )
+from app.temporal import resolve_live_window, temporal_metadata
 
 log = structlog.get_logger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
@@ -123,8 +130,26 @@ def adapters(settings: Settings):
             settings.request_timeout_seconds,
             settings.adapter_version,
         ),
+        NWSObservationsAdapter(
+            settings.nws_observations_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            settings.adapter_version,
+        ),
         USGSAdapter(
             settings.usgs_earthquake_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            settings.adapter_version,
+        ),
+        USGSWaterAdapter(
+            settings.usgs_water_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            settings.adapter_version,
+        ),
+        NHCAdapter(
+            settings.nhc_url,
             settings.source_user_agent,
             settings.request_timeout_seconds,
             settings.adapter_version,
@@ -139,7 +164,11 @@ async def seed_demo_data(
     fallback_source_keys: set[str] | None = None,
 ) -> None:
     seeded_keys: set[str] = set()
-    for adapter, filename in zip(adapters(settings), ("nws_alerts.json", "usgs_earthquakes.json"), strict=True):
+    fixtures = {"nws": "nws_alerts.json", "usgs": "usgs_earthquakes.json"}
+    for adapter in adapters(settings):
+        filename = fixtures.get(adapter.key)
+        if filename is None:
+            continue
         if fallback_source_keys is not None and adapter.key not in fallback_source_keys:
             continue
         source = await ensure_source(session, adapter)
@@ -204,7 +233,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SIGNALWAKE API",
     version="0.1.0",
-    description="Authoritative NWS and USGS observations normalized into canonical operational events.",
+    description="Authoritative NWS alerts and station observations, USGS earthquake and water observations, and NHC systems normalized into canonical operational events.",
     lifespan=lifespan,
 )
 app.state.startup_ready = True
@@ -545,14 +574,17 @@ async def events(
     session: AsyncSession = Depends(session_dependency),
 ) -> EventListResponse:
     offset = (page - 1) * limit if page else cursor
+    try:
+        window = resolve_live_window(start_time, end_time, now=utc_now(), require_recent=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     items, total, next_offset = await list_events(
         session,
         bbox=bbox,
         source=source,
         event_type=type,
         severity=severity,
-        start_time=start_time,
-        end_time=end_time,
+        window=window,
         limit=limit,
         cursor=offset,
     )
@@ -561,6 +593,99 @@ async def events(
         total=total,
         limit=limit,
         next_cursor=str(next_offset) if next_offset is not None else None,
+        **temporal_metadata(window),
+    )
+
+
+@app.get("/sources/catalog", response_model=LayerCatalogResponse, tags=["sources"])
+@app.get("/layers", response_model=LayerCatalogResponse, tags=["layers"])
+async def layer_catalog(session: AsyncSession = Depends(session_dependency)) -> LayerCatalogResponse:
+    generated_at = utc_now()
+    window = resolve_live_window(now=generated_at)
+    return LayerCatalogResponse(
+        **temporal_metadata(window, generated_at=generated_at),
+        items=await catalog_items(session, window, generated_at=generated_at),
+    )
+
+
+def _event_layer_feature(item: EventResponse) -> dict[str, object] | None:
+    geometry = item.geometry
+    if geometry is None and item.latitude is not None and item.longitude is not None:
+        geometry = {"type": "Point", "coordinates": [item.longitude, item.latitude]}
+    if geometry is None:
+        return None
+    return {
+        "type": "Feature",
+        "id": item.id,
+        "properties": {
+            "event_id": item.id,
+            "source": item.source_key,
+            "title": item.title,
+            "type": item.type,
+            "severity": item.severity,
+            "status": item.status,
+            "classification": item.classification,
+            "observed_at": item.observed_at.isoformat(),
+            "provenance": item.provenance[0].model_dump(mode="json") if item.provenance else {},
+        },
+        "geometry": geometry,
+    }
+
+
+@app.get("/layers/{layer_key}/data", response_model=LayerDataResponse, tags=["layers"])
+async def layer_data(
+    layer_key: str,
+    limit: int = Query(200, ge=1, le=500),
+    session: AsyncSession = Depends(session_dependency),
+) -> LayerDataResponse:
+    specs = specs_by_key()
+    spec = specs.get(layer_key)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="Layer is not in the source catalog")
+    generated_at = utc_now()
+    window = resolve_live_window(now=generated_at)
+    item = next(row for row in await catalog_items(session, window, generated_at=generated_at) if row.key == layer_key)
+    features: list[dict[str, object]] = []
+    if spec.source_key:
+        if layer_key in {"nws_alerts", "nws_observations", "usgs_earthquakes", "usgs_water", "nhc_systems"}:
+            rows, _, _ = await list_events(
+                session,
+                source=spec.source_key,
+                window=window,
+                limit=limit,
+            )
+            features = [feature for row in rows if (feature := _event_layer_feature(row)) is not None]
+        elif layer_key in {"bts", "fra"}:
+            rows, _, _ = await list_infrastructure(session, source=spec.source_key, limit=limit, cursor=0)
+            features = [
+                {
+                    "type": "Feature",
+                    "id": row.id,
+                    "properties": {
+                        "asset_id": row.id,
+                        "source": row.source_key,
+                        "title": row.name,
+                        "asset_type": row.type,
+                        "classification": row.classification,
+                    },
+                    "geometry": row.geometry,
+                }
+                for row in rows
+            ]
+    return LayerDataResponse(
+        key=layer_key,
+        status=item.status,
+        generated_at=generated_at,
+        window_start=window.start,
+        window_end=window.end,
+        window_hours=48,
+        temporal_semantics=item.temporal_semantics,
+        geometry_kind=spec.geometry_kind,
+        feature_count=len(features),
+        bounded_limit=limit,
+        features=features,
+        provenance={**item.provenance, "source_url": item.endpoint, "adapter_version": item.adapter_version},
+        error=item.error,
     )
 
 
