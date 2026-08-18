@@ -45,7 +45,49 @@ export type Source = {
   last_error: string | null;
   last_http_status: number | null;
   freshness_seconds: number | null;
+  expected_update_interval_seconds?: number | null;
+  last_run_id?: string | null;
+  last_records_retrieved?: number | null;
+  last_records_accepted?: number | null;
+  last_records_rejected?: number | null;
   health: "HEALTHY" | "STALE" | "ERROR" | "UNKNOWN";
+};
+
+export type LineageNode = {
+  type: string;
+  id: string;
+  label: string;
+  direct_or_derived: "direct" | "derived" | string;
+  source: Record<string, unknown> | null;
+  observed_at: string | null;
+  ingested_at: string | null;
+  generated_at: string | null;
+  transformation: Record<string, unknown> | null;
+  freshness_seconds: number | null;
+  confidence: number | null;
+  evidence: Record<string, unknown>;
+};
+
+export type LineageEdge = {
+  id: string;
+  upstream: { type: string; id: string };
+  downstream: { type: string; id: string };
+  relation_kind: string;
+  transformation_run_id: string | null;
+  evidence: Record<string, unknown>;
+  observed_at: string | null;
+  ingested_at: string | null;
+  generated_at: string | null;
+};
+
+export type LineageResponse = {
+  object_type: string;
+  object_id: string;
+  direction: "upstream" | "downstream" | "both" | string;
+  limit: number;
+  truncated: boolean;
+  nodes: LineageNode[];
+  edges: LineageEdge[];
 };
 
 export type InfrastructureProvenance = {
