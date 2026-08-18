@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
@@ -33,7 +35,23 @@ from app.graph_repository import (
 )
 from app.ingest import ensure_source, ingest_once, persist_normalized
 from app.logging import configure_logging
-from app.models import Event, InfrastructureRelationshipType, Scenario, Source
+from app.models import (
+    Event,
+    InfrastructureRelationshipType,
+    InfrastructureSource,
+    Scenario,
+    Source,
+    TransformationRun,
+)
+from app.observability import (
+    bounded_text,
+    error_category,
+    metrics,
+    utc_now,
+)
+from app.observability import (
+    request_id as make_request_id,
+)
 from app.provenance import lineage as build_lineage
 from app.replay import replay_compare as build_replay_compare
 from app.replay import replay_state as build_replay_state
@@ -41,8 +59,10 @@ from app.replay import replay_timeline as build_replay_timeline
 from app.repository import (
     get_event,
     get_infrastructure,
+    infrastructure_source_health_payload,
     list_events,
     list_infrastructure,
+    source_health_payload,
     source_response,
 )
 from app.scenarios import (
@@ -69,7 +89,12 @@ from app.schemas import (
     GraphPathResponse,
     GraphRebuildResponse,
     GraphSubgraphResponse,
+    HealthLiveResponse,
+    HealthMetricsResponse,
+    HealthReadyResponse,
     HealthResponse,
+    HealthSource,
+    HealthSourcesResponse,
     InfrastructureListResponse,
     InfrastructureResponse,
     LineageResponse,
@@ -147,6 +172,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     engine = create_engine(settings)
     factory = session_factory(engine)
+    app.state.startup_ready = False
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = factory
@@ -168,7 +194,9 @@ async def lifespan(app: FastAPI):
             )
         if settings.use_demo_data and fallback_source_keys:
             await seed_demo_data(session, settings, fallback_source_keys=fallback_source_keys)
+    app.state.startup_ready = True
     yield
+    app.state.startup_ready = False
     await engine.dispose()
 
 
@@ -178,6 +206,7 @@ app = FastAPI(
     description="Authoritative NWS and USGS observations normalized into canonical operational events.",
     lifespan=lifespan,
 )
+app.state.startup_ready = True
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -187,6 +216,53 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def observe_requests(request: Request, call_next):
+    """Record bounded request facts and propagate one correlation ID."""
+
+    request_id = make_request_id(request.headers.get("X-Request-ID"))
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id=request_id)
+    started = perf_counter()
+    status_code = 500
+    category: str | None = None
+    message: str | None = None
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        if status_code >= 400:
+            category = error_category(None, status_code)
+        return response
+    except Exception as exc:  # noqa: BLE001 - preserve framework exception handling
+        category = error_category(exc)
+        message = bounded_text(exc)
+        raise
+    finally:
+        duration_ms = (perf_counter() - started) * 1000
+        route = getattr(request.scope.get("route"), "path", None) or request.url.path
+        metrics.record_request(
+            method=request.method,
+            route=route,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            request_id=request_id,
+            category=category,
+            message=message,
+        )
+        log_method = log.error if status_code >= 500 else (log.warning if status_code >= 400 else log.info)
+        log_method(
+            "api_request",
+            method=request.method,
+            route=route,
+            status_code=status_code,
+            duration_ms=round(duration_ms, 3),
+            request_id=request_id,
+            error_category=category,
+        )
+        if "response" in locals():
+            response.headers["X-Request-ID"] = request_id
+
+
 async def session_dependency(
     factory: async_sessionmaker[AsyncSession] = Depends(lambda: app.state.session_factory),
 ):
@@ -194,16 +270,160 @@ async def session_dependency(
         yield session
 
 
+async def _health_source_rows(session: AsyncSession) -> list[dict[str, object]]:
+    now = utc_now()
+    event_sources = (await session.execute(select(Source).order_by(Source.key))).scalars().all()
+    infrastructure_sources = (
+        await session.execute(select(InfrastructureSource).order_by(InfrastructureSource.key))
+    ).scalars().all()
+    return [
+        *[source_health_payload(source, now) for source in event_sources],
+        *[infrastructure_source_health_payload(source, now) for source in infrastructure_sources],
+    ]
+
+
+def _overall_source_state(rows: list[dict[str, object]]) -> str:
+    states = {str(row["operational_state"]) for row in rows}
+    if "DOWN" in states:
+        return "DOWN"
+    if "DEGRADED" in states:
+        return "DEGRADED"
+    if "ACTIVE" in states:
+        return "ACTIVE"
+    return "UNKNOWN"
+
+
+async def _database_connected(session: AsyncSession) -> bool:
+    try:
+        await session.execute(text("SELECT 1"))
+        return True
+    except Exception:  # noqa: BLE001 - readiness must convert DB failures to a status
+        return False
+
+
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 async def health(session: AsyncSession = Depends(session_dependency)) -> HealthResponse:
-    sources = [source_response(item) for item in (await session.execute(select(Source))).scalars().all()]
+    database_ok = await _database_connected(session)
+    sources: list[SourceResponse] = []
+    rows: list[dict[str, object]] = []
+    if database_ok:
+        try:
+            sources = [source_response(item) for item in (await session.execute(select(Source))).scalars().all()]
+            rows = await _health_source_rows(session)
+        except Exception:  # noqa: BLE001 - report a degraded platform summary
+            database_ok = False
+    state = _overall_source_state(rows)
+    if not database_ok:
+        state = "DEGRADED"
+    process = metrics.snapshot()
     return HealthResponse(
-        status="ok",
+        status="ok" if database_ok and state in {"ACTIVE", "UNKNOWN"} else "degraded",
         service="signalwake-api",
         environment=get_settings().app_env,
-        database="connected",
+        database="connected" if database_ok else "disconnected",
         sources=sources,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=utc_now(),
+        overall_state=state,
+        database_state="connected" if database_ok else "disconnected",
+        readiness="ready" if getattr(app.state, "startup_ready", True) and database_ok else "not_ready",
+        version=app.version,
+        uptime_seconds=process["uptime_seconds"],
+        source_counts=dict(Counter(str(row["operational_state"]) for row in rows)),
+    )
+
+
+@app.get("/health/live", response_model=HealthLiveResponse, tags=["system"])
+async def health_live() -> HealthLiveResponse:
+    return HealthLiveResponse(service="signalwake-api", generated_at=utc_now())
+
+
+@app.get("/health/ready", response_model=HealthReadyResponse, tags=["system"])
+async def health_ready(response: Response, session: AsyncSession = Depends(session_dependency)) -> HealthReadyResponse:
+    startup_ready = bool(getattr(app.state, "startup_ready", True))
+    database_ok = await _database_connected(session)
+    ready = startup_ready and database_ok
+    if not ready:
+        response.status_code = 503
+    return HealthReadyResponse(
+        status="ready" if ready else "not_ready",
+        service="signalwake-api",
+        database="connected" if database_ok else "disconnected",
+        startup="complete" if startup_ready else "starting",
+        generated_at=utc_now(),
+    )
+
+
+@app.get("/health/sources", response_model=HealthSourcesResponse, tags=["system"])
+async def health_sources(session: AsyncSession = Depends(session_dependency)) -> HealthSourcesResponse:
+    rows = await _health_source_rows(session)
+    return HealthSourcesResponse(
+        generated_at=utc_now(),
+        items=[HealthSource.model_validate(row) for row in rows],
+        counts=dict(Counter(str(row["operational_state"]) for row in rows)),
+    )
+
+
+async def _persisted_run_metrics(session: AsyncSession) -> tuple[dict[str, object], list[dict[str, object]]]:
+    runs = (
+        await session.execute(select(TransformationRun).order_by(TransformationRun.started_at.desc()).limit(200))
+    ).scalars().all()
+    by_kind: dict[str, dict[str, object]] = {}
+    failures: list[dict[str, object]] = []
+    for run in runs:
+        kind = run.run_kind[:64]
+        summary = by_kind.setdefault(
+            kind,
+            {"run_kind": kind, "run_count": 0, "completed": 0, "failed": 0, "partial": 0, "latencies_ms": [], "records_retrieved": 0, "records_accepted": 0, "records_rejected": 0},
+        )
+        summary["run_count"] = int(summary["run_count"]) + 1
+        status = str(run.status).lower()
+        if status in summary:
+            summary[status] = int(summary[status]) + 1
+        if run.started_at and run.completed_at:
+            duration = max(0.0, (run.completed_at - run.started_at).total_seconds() * 1000)
+            cast_latencies = summary["latencies_ms"]
+            assert isinstance(cast_latencies, list)
+            if len(cast_latencies) < 100:
+                cast_latencies.append(duration)
+        for field in ("records_retrieved", "records_accepted", "records_rejected"):
+            value = getattr(run, field) or 0
+            summary[field] = int(summary[field]) + int(value)
+        if status in {"failed", "partial"} or run.error:
+            failures.append({
+                "source": "persisted_runs",
+                "occurred_at": run.completed_at or run.started_at,
+                "run_id": run.id,
+                "run_kind": run.run_kind,
+                "status": run.status,
+                "error_category": run.error_category or ("processing_error" if run.error else None),
+                "message": bounded_text(run.error),
+            })
+    for summary in by_kind.values():
+        latencies = summary.pop("latencies_ms")
+        assert isinstance(latencies, list)
+        summary["average_latency_ms"] = round(sum(latencies) / len(latencies), 3) if latencies else 0.0
+        summary["max_latency_ms"] = round(max(latencies), 3) if latencies else 0.0
+    return {"collection_scope": "persisted_runs", "bounded_limit": 200, "by_kind": list(by_kind.values())}, failures[:50]
+
+
+@app.get("/metrics", response_model=HealthMetricsResponse, tags=["system"])
+async def metrics_endpoint(session: AsyncSession = Depends(session_dependency)) -> HealthMetricsResponse:
+    generated_at = utc_now()
+    persisted, failures = await _persisted_run_metrics(session)
+    rows = await _health_source_rows(session)
+    process = metrics.snapshot(now=generated_at)
+    process_incidents = process.get("recent_incidents", [])
+    assert isinstance(process_incidents, list)
+    return HealthMetricsResponse(
+        generated_at=generated_at,
+        process_local=process,
+        persisted_runs=persisted,
+        sources=HealthSourcesResponse(
+            generated_at=generated_at,
+            items=[HealthSource.model_validate(row) for row in rows],
+            counts=dict(Counter(str(row["operational_state"]) for row in rows)),
+        ),
+        recent_failures=[*process_incidents[:50], *failures[:50]][:100],
     )
 
 

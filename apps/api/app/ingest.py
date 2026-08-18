@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.base import AdapterError, NormalizedEvent, SourceAdapter, payload_hash
 from app.history import record_event_version, record_source_state
 from app.models import Event, ProcessingState, RawObservation, Source, TransformationRun
+from app.observability import bounded_text, error_category
 
 log = structlog.get_logger(__name__)
 
@@ -86,8 +87,11 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
         try:
             features = await adapter.fetch()
         except Exception as exc:  # noqa: BLE001 - one source must not block the other
-            error = str(exc)
+            error = bounded_text(exc) or "source fetch failed"
+            category = error_category(exc)
             source.last_error = error
+            source.last_failure_at = attempted_at
+            source.last_error_category = category
             source.last_http_status = adapter.last_http_status
             source.freshness_seconds = None
             source.last_records_retrieved = 0
@@ -96,6 +100,7 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
             run.completed_at = datetime.now(timezone.utc)
             run.status = "failed"
             run.error = error
+            run.error_category = category
             run.records_retrieved = 0
             run.records_accepted = 0
             run.records_rejected = 0
@@ -148,7 +153,6 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
             normalized_count += 1
             latest_observed = max(latest_observed, normalized.observed_at) if latest_observed else normalized.observed_at
 
-        source.last_success_at = attempted_at
         source.last_http_status = adapter.last_http_status
         source.freshness_seconds = (
             max(0, int((attempted_at - latest_observed).total_seconds())) if latest_observed else 0
@@ -165,6 +169,13 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
         if skipped_count:
             error = f"{skipped_count} malformed feature(s) skipped"
             source.last_error = error
+            source.last_failure_at = attempted_at
+            source.last_error_category = "normalization_error"
+            run.error = error
+            run.error_category = "normalization_error"
+            if normalized_count == 0:
+                run.status = "failed"
+                source.freshness_seconds = None
             log.warning(
                 "source_ingest_partial",
                 source=adapter.key,
@@ -172,8 +183,25 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
                 normalized_count=normalized_count,
                 skipped_count=skipped_count,
             )
+        elif normalized_count == 0:
+            error = "no usable records returned"
+            source.last_error = error
+            source.last_failure_at = attempted_at
+            source.last_error_category = "no_usable_records"
+            source.freshness_seconds = None
+            run.status = "failed"
+            run.error = error
+            run.error_category = "no_usable_records"
+            log.warning(
+                "source_ingest_empty",
+                source=adapter.key,
+                fetched_count=len(features),
+                error_category="no_usable_records",
+            )
         else:
+            source.last_success_at = attempted_at
             source.last_error = None
+            run.error_category = None
             log.info(
                 "source_ingest_succeeded",
                 source=adapter.key,

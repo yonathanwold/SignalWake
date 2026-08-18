@@ -8,6 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.models import Event, InfrastructureAsset, InfrastructureSource, Source
+from app.observability import (
+    bounded_text,
+    normalize_datetime,
+    operational_state,
+    source_threshold_seconds,
+)
 from app.schemas import (
     EventResponse,
     InfrastructureProvenance,
@@ -31,8 +37,97 @@ def _health(source: Source, now: datetime | None = None) -> str:
     return "HEALTHY" if age < 3600 else "STALE"
 
 
+def source_health_payload(source: Source, now: datetime | None = None) -> dict[str, object]:
+    """Return the common event-source operational matrix row."""
+
+    now = now or datetime.now(timezone.utc)
+    success = normalize_datetime(source.last_success_at)
+    threshold = source_threshold_seconds(source.expected_update_interval_seconds)
+    freshness = None
+    if success:
+        freshness = max(0, int((normalize_datetime(now) - success).total_seconds()))
+    return {
+        "source_type": "event",
+        "id": source.id,
+        "key": source.key,
+        "name": source.name,
+        "kind": source.kind,
+        "endpoint": source.endpoint,
+        "active": source.active,
+        "adapter_version": source.adapter_version,
+        "operational_state": operational_state(
+            last_success_at=source.last_success_at,
+            last_attempt_at=source.last_attempt_at,
+            last_failure_at=source.last_failure_at,
+            records_rejected=source.last_records_rejected,
+            expected_interval_seconds=source.expected_update_interval_seconds,
+            now=now,
+        ),
+        "health": _health(source, now),
+        "last_success_at": source.last_success_at,
+        "last_attempt_at": source.last_attempt_at,
+        "last_failure_at": source.last_failure_at,
+        "expected_update_interval_seconds": source.expected_update_interval_seconds,
+        "freshness_seconds": freshness if freshness is not None else source.freshness_seconds,
+        "freshness_threshold_seconds": threshold,
+        "records_received": source.last_records_retrieved,
+        "records_accepted": source.last_records_accepted,
+        "records_rejected": source.last_records_rejected,
+        "last_run_id": source.last_run_id,
+        "last_error_category": source.last_error_category,
+        "last_error": bounded_text(source.last_error),
+    }
+
+
+def infrastructure_source_health_payload(source: InfrastructureSource, now: datetime | None = None) -> dict[str, object]:
+    now = now or datetime.now(timezone.utc)
+    threshold = source_threshold_seconds(source.expected_update_interval_seconds)
+    freshness = None
+    if source.last_import_at:
+        freshness = max(0, int((normalize_datetime(now) - normalize_datetime(source.last_import_at)).total_seconds()))
+    return {
+        "source_type": "infrastructure",
+        "id": source.id,
+        "key": source.key,
+        "name": source.name,
+        "kind": "infrastructure",
+        "endpoint": source.endpoint,
+        "active": source.active,
+        "adapter_version": source.adapter_version,
+        "operational_state": operational_state(
+            last_success_at=source.last_success_at,
+            last_attempt_at=source.last_attempt_at or source.last_import_at,
+            last_failure_at=source.last_failure_at,
+            records_rejected=source.last_records_rejected,
+            expected_interval_seconds=source.expected_update_interval_seconds,
+            now=now,
+        ),
+        "health": "ERROR" if source.last_import_error and source.last_import_count in (None, 0) else (
+            "STALE" if freshness is not None and freshness > 3600 else ("ERROR" if source.last_import_error else ("HEALTHY" if freshness is not None else "UNKNOWN"))
+        ),
+        "last_success_at": source.last_success_at,
+        "last_attempt_at": source.last_attempt_at or source.last_import_at,
+        "last_failure_at": source.last_failure_at,
+        "expected_update_interval_seconds": source.expected_update_interval_seconds,
+        "freshness_seconds": freshness,
+        "freshness_threshold_seconds": threshold,
+        "records_received": source.last_records_retrieved,
+        "records_accepted": source.last_records_accepted,
+        "records_rejected": source.last_records_rejected,
+        "last_run_id": source.last_run_id,
+        "last_error_category": source.last_error_category,
+        "last_error": bounded_text(source.last_import_error),
+    }
+
+
 def source_response(source: Source) -> SourceResponse:
-    return SourceResponse.model_validate({**source.__dict__, "health": _health(source)})
+    return SourceResponse.model_validate({**source.__dict__, "health": _health(source), "operational_state": operational_state(
+        last_success_at=source.last_success_at,
+        last_attempt_at=source.last_attempt_at,
+        last_failure_at=source.last_failure_at,
+        records_rejected=source.last_records_rejected,
+        expected_interval_seconds=source.expected_update_interval_seconds,
+    )})
 
 
 def event_response(event: Event) -> EventResponse:

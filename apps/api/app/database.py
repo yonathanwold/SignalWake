@@ -21,10 +21,10 @@ def create_engine(settings: Settings) -> AsyncEngine:
 async def init_db(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
-        await connection.run_sync(_ensure_phase7_columns)
+        await connection.run_sync(_ensure_compatibility_columns)
 
 
-def _ensure_phase7_columns(connection) -> None:
+def _ensure_compatibility_columns(connection) -> None:
     """Upgrade a create_all-managed dev database without requiring a reset.
 
     Production deployments apply numbered SQL migrations.  The local SQLite
@@ -41,6 +41,8 @@ def _ensure_phase7_columns(connection) -> None:
             "last_records_retrieved": "INTEGER",
             "last_records_accepted": "INTEGER",
             "last_records_rejected": "INTEGER",
+            "last_failure_at": "DATETIME",
+            "last_error_category": "VARCHAR(64)",
         },
         "infrastructure_sources": {
             "expected_update_interval_seconds": "INTEGER",
@@ -48,6 +50,13 @@ def _ensure_phase7_columns(connection) -> None:
             "last_records_retrieved": "INTEGER",
             "last_records_accepted": "INTEGER",
             "last_records_rejected": "INTEGER",
+            "last_failure_at": "DATETIME",
+            "last_error_category": "VARCHAR(64)",
+            "last_success_at": "DATETIME",
+            "last_attempt_at": "DATETIME",
+        },
+        "transformation_runs": {
+            "error_category": "VARCHAR(64)",
         },
     }
     inspector = inspect(connection)

@@ -28,6 +28,8 @@ class SourceResponse(BaseModel):
     last_success_at: datetime | None = None
     last_attempt_at: datetime | None = None
     last_error: str | None = None
+    last_failure_at: datetime | None = None
+    last_error_category: str | None = None
     last_http_status: int | None = None
     freshness_seconds: int | None = None
     expected_update_interval_seconds: int | None = None
@@ -36,6 +38,7 @@ class SourceResponse(BaseModel):
     last_records_accepted: int | None = None
     last_records_rejected: int | None = None
     health: str = "UNKNOWN"
+    operational_state: str = "UNKNOWN"
 
 
 class LineageNode(BaseModel):
@@ -377,6 +380,68 @@ class HealthResponse(BaseModel):
     database: str
     sources: list[SourceResponse]
     generated_at: datetime
+    overall_state: str = "UNKNOWN"
+    database_state: str = "connected"
+    readiness: str = "ready"
+    version: str | None = None
+    uptime_seconds: float | None = None
+    source_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class HealthSource(BaseModel):
+    source_type: str
+    id: str
+    key: str
+    name: str
+    kind: str | None = None
+    endpoint: str
+    active: bool
+    adapter_version: str
+    operational_state: str
+    health: str
+    last_success_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    expected_update_interval_seconds: int | None = None
+    freshness_seconds: int | None = None
+    freshness_threshold_seconds: int
+    records_received: int | None = None
+    records_accepted: int | None = None
+    records_rejected: int | None = None
+    last_run_id: str | None = None
+    last_error_category: str | None = None
+    last_error: str | None = None
+
+
+class HealthSourcesResponse(BaseModel):
+    generated_at: datetime
+    collection_scope: str = "persisted_source_state"
+    items: list[HealthSource]
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class HealthLiveResponse(BaseModel):
+    status: str = "alive"
+    service: str
+    generated_at: datetime
+    collection_scope: str = "process_local"
+
+
+class HealthReadyResponse(BaseModel):
+    status: str
+    service: str
+    database: str
+    startup: str
+    generated_at: datetime
+
+
+class HealthMetricsResponse(BaseModel):
+    generated_at: datetime
+    collection_scope: str = "mixed"
+    process_local: dict[str, Any]
+    persisted_runs: dict[str, Any]
+    sources: HealthSourcesResponse
+    recent_failures: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ReplayTimelineMarker(BaseModel):

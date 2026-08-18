@@ -43,6 +43,8 @@ export type Source = {
   last_success_at: string | null;
   last_attempt_at: string | null;
   last_error: string | null;
+  last_failure_at?: string | null;
+  last_error_category?: string | null;
   last_http_status: number | null;
   freshness_seconds: number | null;
   expected_update_interval_seconds?: number | null;
@@ -51,6 +53,49 @@ export type Source = {
   last_records_accepted?: number | null;
   last_records_rejected?: number | null;
   health: "HEALTHY" | "STALE" | "ERROR" | "UNKNOWN";
+  operational_state?: "ACTIVE" | "DEGRADED" | "DOWN" | "UNKNOWN";
+};
+
+export type HealthSource = {
+  source_type: "event" | "infrastructure" | string;
+  id: string;
+  key: string;
+  name: string;
+  kind: string | null;
+  endpoint: string;
+  active: boolean;
+  adapter_version: string;
+  operational_state: "ACTIVE" | "DEGRADED" | "DOWN" | "UNKNOWN" | string;
+  health: "HEALTHY" | "STALE" | "ERROR" | "UNKNOWN" | string;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  last_failure_at: string | null;
+  expected_update_interval_seconds: number | null;
+  freshness_seconds: number | null;
+  freshness_threshold_seconds: number;
+  records_received: number | null;
+  records_accepted: number | null;
+  records_rejected: number | null;
+  last_run_id: string | null;
+  last_error_category: string | null;
+  last_error: string | null;
+};
+
+export type HealthMetrics = {
+  generated_at: string;
+  process_local: {
+    uptime_seconds: number;
+    requests: number;
+    errors: number;
+    error_rate: number;
+    average_latency_ms: number;
+    max_latency_ms: number;
+    endpoints: Array<{ method: string; route: string; requests: number; errors: number; average_latency_ms: number; max_latency_ms: number; error_rate: number }>;
+    recent_incidents: Array<{ occurred_at: string; route: string; method: string; status_code: number; category: string; request_id: string; message: string | null }>;
+  };
+  persisted_runs: { bounded_limit: number; by_kind: Array<{ run_kind: string; run_count: number; completed: number; failed: number; partial: number; average_latency_ms: number; max_latency_ms: number; records_retrieved: number; records_accepted: number; records_rejected: number }> };
+  sources: { generated_at: string; items: HealthSource[]; counts: Record<string, number> };
+  recent_failures: Array<Record<string, unknown>>;
 };
 
 export type LineageNode = {

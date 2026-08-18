@@ -299,3 +299,10 @@ The `/provenance` browser workspace is a focused flow rather than an admin
 table. Event, asset, graph relationship, assessment, and replay inspectors
 link to a concrete lineage focus. The workspace has no demo lineage fallback:
 an unavailable API or missing object is shown as an explicit empty/error state.
+# System health
+
+Runtime health is documented in [system-health.md](system-health.md). The API
+keeps request metrics process-local and derives processing latency from actual
+persisted transformation runs. Source freshness uses each source's configured
+expected interval with a one-hour fallback; there is no scheduler or permanent
+background worker.

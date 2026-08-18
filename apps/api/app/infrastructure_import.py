@@ -21,6 +21,7 @@ from app.models import (
     RawInfrastructureRecord,
     TransformationRun,
 )
+from app.observability import bounded_text
 from app.spatial import GeometryValidationError, geometry_centroid, validate_geometry
 
 log = logging.getLogger(__name__)
@@ -250,7 +251,35 @@ async def import_payload(
     session.add(run)
     await session.flush()
     source.last_run_id = run.id
-    features = _feature_list(payload)
+    source.last_attempt_at = fetched_at
+    try:
+        features = _feature_list(payload)
+    except (TypeError, ValueError) as exc:
+        message = bounded_text(exc) or "invalid infrastructure payload"
+        category = "invalid_payload"
+        source.last_import_at = fetched_at
+        source.last_import_count = 0
+        source.last_import_error = message
+        source.last_records_retrieved = 0
+        source.last_records_accepted = 0
+        source.last_records_rejected = 0
+        source.last_failure_at = fetched_at
+        source.last_error_category = category
+        run.completed_at = datetime.now(timezone.utc)
+        run.status = "failed"
+        run.error = message
+        run.error_category = category
+        await record_infrastructure_source_state(session, source, fetched_at)
+        await session.commit()
+        return InfrastructureImportStats(
+            source_key=source_key,
+            fetched_count=0,
+            inserted_count=0,
+            updated_count=0,
+            skipped_count=0,
+            duplicate_count=0,
+            imported_at=fetched_at,
+        )
     inserted_count = updated_count = skipped_count = duplicate_count = 0
     processed = 0
     for index, feature in enumerate(features):
@@ -349,7 +378,15 @@ async def import_payload(
                 log.info("infrastructure_import_batch", extra={"source": source_key, "processed": processed})
         except (GeometryValidationError, KeyError, TypeError, ValueError) as exc:
             skipped_count += 1
-            log.warning("infrastructure_record_skipped", extra={"source": source_key, "index": index, "error": str(exc)})
+            log.warning(
+                "infrastructure_record_skipped",
+                extra={
+                    "source": source_key,
+                    "index": index,
+                    "error": bounded_text(exc),
+                    "error_category": "normalization_error",
+                },
+            )
 
     source.last_import_at = fetched_at
     source.last_import_count = processed
@@ -363,6 +400,12 @@ async def import_payload(
     run.records_accepted = processed
     run.records_rejected = skipped_count
     run.error = source.last_import_error
+    run.error_category = "normalization_error" if skipped_count else None
+    if processed:
+        source.last_success_at = fetched_at
+    if skipped_count:
+        source.last_failure_at = fetched_at
+        source.last_error_category = "normalization_error"
     await record_infrastructure_source_state(session, source, fetched_at)
     await session.commit()
     return InfrastructureImportStats(
