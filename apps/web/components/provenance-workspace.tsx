@@ -40,6 +40,7 @@ export function ProvenanceWorkspace() {
   const router = useRouter();
   const queryType = searchParams.get("object_type");
   const queryId = searchParams.get("object_id");
+  const queryAt = searchParams.get("at");
   const [lineage, setLineage] = useState<LineageResponse | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
@@ -55,6 +56,7 @@ export function ProvenanceWorkspace() {
     setError(null);
     try {
       const params = new URLSearchParams({ object_type: queryType, object_id: queryId, direction: "both", limit: "80" });
+      if (queryAt) params.set("at", queryAt);
       const response = await fetch(`${apiBase()}/provenance/lineage?${params.toString()}`, { cache: "no-store" });
       if (!response.ok) throw new Error(`Provenance API returned ${response.status}`);
       const body = (await response.json()) as LineageResponse;
@@ -66,7 +68,7 @@ export function ProvenanceWorkspace() {
       setStatus("error");
       setError(cause instanceof Error ? cause.message : "Unable to reach the provenance API");
     }
-  }, [queryId, queryType]);
+  }, [queryAt, queryId, queryType]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -75,7 +77,8 @@ export function ProvenanceWorkspace() {
 
   function selectNode(node: LineageNode) {
     setSelectedKey(`${node.type}:${node.id}`);
-    router.replace(`/provenance?object_type=${encodeURIComponent(node.type)}&object_id=${encodeURIComponent(node.id)}`);
+    const at = queryAt ? `&at=${encodeURIComponent(queryAt)}` : "";
+    router.replace(`/provenance?object_type=${encodeURIComponent(node.type)}&object_id=${encodeURIComponent(node.id)}${at}`);
   }
 
   return <div className="provenance-page">

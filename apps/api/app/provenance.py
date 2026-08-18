@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -77,12 +77,24 @@ def _list_json(value: str | list[Any] | None) -> list[Any]:
 def _source_info(source: Source | InfrastructureSource | None) -> dict[str, Any] | None:
     if source is None:
         return None
+    last_error = getattr(source, "last_error", None) or getattr(source, "last_import_error", None)
+    if last_error:
+        health = "ERROR"
+    else:
+        last_success = getattr(source, "last_success_at", None) or getattr(source, "last_import_at", None)
+        if last_success is None:
+            health = "UNKNOWN"
+        else:
+            if last_success.tzinfo is None:
+                last_success = last_success.replace(tzinfo=timezone.utc)
+            interval = getattr(source, "expected_update_interval_seconds", None) or 3600
+            health = "HEALTHY" if (datetime.now(timezone.utc) - last_success).total_seconds() < interval else "STALE"
     return {
         "id": source.id,
         "key": source.key,
         "name": source.name,
         "url": source.endpoint,
-        "health": getattr(source, "last_error", None) and "ERROR" or "UNKNOWN",
+        "health": health,
     }
 
 
@@ -196,6 +208,7 @@ async def _load_objects(session: AsyncSession) -> dict[str, dict[str, Any]]:
         )
 
     events = list((await session.execute(select(Event).options(joinedload(Event.source)))).scalars().all())
+    events_by_id = {item.id: item for item in events}
     for item in events:
         objects[f"event:{item.id}"] = _node(
             "event",
@@ -225,6 +238,8 @@ async def _load_objects(session: AsyncSession) -> dict[str, dict[str, Any]]:
         )
 
     assets = list((await session.execute(select(InfrastructureAsset).options(joinedload(InfrastructureAsset.source)))).scalars().all())
+    infra_sources_by_id = {item.id: item for item in infra_sources}
+    sources_by_id = {item.id: item for item in sources}
     for item in assets:
         objects[f"asset:{item.id}"] = _node(
             "asset",
@@ -237,6 +252,34 @@ async def _load_objects(session: AsyncSession) -> dict[str, dict[str, Any]]:
             generated_at=item.updated_at,
             transformation={"version": item.normalized_version, "run_kind": "infrastructure_import"},
             evidence={"source_asset_id": item.source_asset_id, "payload_hash": item.payload_hash, "classification": item.classification},
+        )
+
+    event_versions = list((await session.execute(select(EventVersion))).scalars().all())
+    for item in event_versions:
+        snapshot = _json(item.snapshot_json)
+        objects[f"event_version:{item.id}"] = _node(
+            "event_version",
+            item.id,
+            label=f"Event version {item.recorded_at.isoformat()}",
+            direct_or_derived="derived",
+            source=_source_info(sources_by_id.get(item.source_id)),
+            generated_at=item.recorded_at,
+            transformation={"version": snapshot.get("normalized_version"), "run_kind": "historical_snapshot"},
+            evidence={"event_id": item.event_id, "payload_hash": item.payload_hash, "valid_to": item.valid_to, "raw_observation_id": item.raw_observation_id},
+        )
+
+    asset_versions = list((await session.execute(select(InfrastructureAssetVersion))).scalars().all())
+    for item in asset_versions:
+        snapshot = _json(item.snapshot_json)
+        objects[f"asset_version:{item.id}"] = _node(
+            "asset_version",
+            item.id,
+            label=f"Asset version {item.recorded_at.isoformat()}",
+            direct_or_derived="derived",
+            source=_source_info(infra_sources_by_id.get(item.source_id)),
+            generated_at=item.recorded_at,
+            transformation={"version": snapshot.get("normalized_version"), "run_kind": "historical_snapshot"},
+            evidence={"asset_id": item.asset_id, "payload_hash": item.payload_hash, "valid_to": item.valid_to},
         )
 
     relationships = list((await session.execute(select(InfrastructureRelationship))).scalars().all())
@@ -264,6 +307,33 @@ async def _load_objects(session: AsyncSession) -> dict[str, dict[str, Any]]:
             transformation={"version": item.methodology_version, "run_kind": "assessment"},
             confidence=item.confidence,
             evidence=_json(item.evidence_json),
+        )
+
+    assessment_versions = list((await session.execute(select(InfrastructureAssessmentVersion))).scalars().all())
+    assessment_ids = {item.id for item in assessments}
+    for item in assessment_versions:
+        target_id = item.assessment_id or item.assessment_key
+        if target_id not in assessment_ids:
+            event = events_by_id.get(item.event_id)
+            objects[f"assessment:{target_id}"] = _node(
+                "assessment",
+                target_id,
+                label=f"Assessment history {item.assessment_key[:18]}",
+                direct_or_derived="derived",
+                source=_source_info(event.source) if event else None,
+                generated_at=item.generated_at,
+                transformation={"version": item.methodology_version, "run_kind": "historical_snapshot"},
+                evidence={"historical_only": True, "is_deleted": item.is_deleted},
+            )
+        objects[f"assessment_version:{item.id}"] = _node(
+            "assessment_version",
+            item.id,
+            label=f"Assessment version {item.generated_at.isoformat()}",
+            direct_or_derived="derived",
+            source=_source_info(events_by_id.get(item.event_id).source) if events_by_id.get(item.event_id) else None,
+            generated_at=item.generated_at,
+            transformation={"version": item.methodology_version, "run_kind": "historical_snapshot"},
+            evidence={"assessment_id": item.assessment_id, "assessment_key": item.assessment_key, "is_deleted": item.is_deleted, "valid_to": item.valid_to},
         )
 
     scenarios = list((await session.execute(select(Scenario))).scalars().all())
@@ -337,6 +407,12 @@ async def _build_edges(session: AsyncSession) -> list[dict[str, Any]]:
     for asset in assets:
         if asset.raw_infrastructure_record_id:
             edges.append(_edge("raw_infrastructure_record", asset.raw_infrastructure_record_id, "asset", asset.id, "normalized_to", evidence={"version": asset.normalized_version}, observed_at=asset.source_updated_at, ingested_at=asset.imported_at))
+    for version in (await session.execute(select(EventVersion))).scalars().all():
+        if version.raw_observation_id:
+            edges.append(_edge("raw_observation", version.raw_observation_id, "event_version", version.id, "normalized_to", evidence={"payload_hash": version.payload_hash}, generated_at=version.recorded_at))
+        edges.append(_edge("event_version", version.id, "event", version.event_id, "historical_version_of", evidence={"payload_hash": version.payload_hash, "valid_to": version.valid_to}, generated_at=version.recorded_at))
+    for version in (await session.execute(select(InfrastructureAssetVersion))).scalars().all():
+        edges.append(_edge("asset_version", version.id, "asset", version.asset_id, "historical_version_of", evidence={"payload_hash": version.payload_hash, "valid_to": version.valid_to}, generated_at=version.recorded_at))
     relationships = list((await session.execute(select(InfrastructureRelationship))).scalars().all())
     for relationship in relationships:
         evidence = _json(relationship.evidence_json)
@@ -350,10 +426,13 @@ async def _build_edges(session: AsyncSession) -> list[dict[str, Any]]:
             edges.append(_edge("asset", assessment.affected_asset_id, "assessment", assessment.id, "assessed_into", evidence={"methodology_version": assessment.methodology_version, **evidence}, generated_at=assessment.updated_at))
         for relationship_id in sorted(_relationship_evidence_ids(evidence)):
             edges.append(_edge("relationship", relationship_id, "assessment", assessment.id, "evidence_for", evidence={"methodology_version": assessment.methodology_version}, generated_at=assessment.updated_at))
+    for version in (await session.execute(select(InfrastructureAssessmentVersion))).scalars().all():
+        target_id = version.assessment_id or version.assessment_key
+        edges.append(_edge("assessment_version", version.id, "assessment", target_id, "historical_version_of", evidence={"is_deleted": version.is_deleted, "valid_to": version.valid_to}, generated_at=version.generated_at))
     scenarios = list((await session.execute(select(Scenario).options(selectinload(Scenario.targets)))).scalars().all())
     for scenario in scenarios:
         for target_type, target_id in _scenario_target_ids(scenario):
-            edges.append(_edge("scenario", scenario.id, target_type, target_id, "scenario_target", evidence={"methodology_version": scenario.methodology_version}, generated_at=scenario.created_at))
+            edges.append(_edge(target_type, target_id, "scenario", scenario.id, "scenario_target", evidence={"methodology_version": scenario.methodology_version}, generated_at=scenario.created_at))
         for run in (await session.execute(select(ScenarioRun).where(ScenarioRun.scenario_id == scenario.id))).scalars().all():
             edges.append(_edge("scenario", scenario.id, "scenario_run", run.id, "executed_as", evidence={"methodology_version": run.methodology_version}, generated_at=run.completed_at))
     runs = list((await session.execute(select(ScenarioRun))).scalars().all())
@@ -400,6 +479,26 @@ async def lineage(
     all_edges = await _build_edges(session)
     deduplicated = {item["id"]: item for item in all_edges}
     edges = [item for item in deduplicated.values() if _edge_matches(item, object_type, object_id, direction)]
+    if at is not None:
+        version_types = {"event": "event_version", "asset": "asset_version", "assessment": "assessment_version"}
+        version_type = version_types.get(object_type)
+        if version_type:
+            boundary = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+            edges = [
+                item
+                for item in edges
+                if not any(
+                    endpoint["type"] == version_type
+                    and item.get("generated_at") is not None
+                    and (
+                        item["generated_at"].replace(tzinfo=timezone.utc)
+                        if item["generated_at"].tzinfo is None
+                        else item["generated_at"]
+                    )
+                    > boundary
+                    for endpoint in (item["upstream"], item["downstream"])
+                )
+            ]
     edges.sort(key=lambda item: (item["relation_kind"], item["upstream"]["id"], item["downstream"]["id"], item["id"]))
     truncated = len(edges) > limit
     selected = edges[:limit]
@@ -417,18 +516,21 @@ async def lineage(
             version_key = f"event_version:{version.id}"
             objects[version_key] = _node("event_version", version.id, label=f"Event version {version.recorded_at.isoformat()}", direct_or_derived="derived", generated_at=version.recorded_at, transformation={"version": _json(version.snapshot_json).get("normalized_version"), "run_kind": "historical_snapshot"}, evidence={"payload_hash": version.payload_hash, "valid_to": version.valid_to})
             node_keys.add(version_key)
-            selected.append(_edge("event_version", version.id, "event", object_id, "historical_version_of", generated_at=version.recorded_at, evidence={"known_as_of": at.isoformat()}))
+            if not any(item["id"] == f"event_version:{version.id}|historical_version_of|event:{object_id}" for item in selected):
+                selected.append(_edge("event_version", version.id, "event", object_id, "historical_version_of", generated_at=version.recorded_at, evidence={"known_as_of": at.isoformat()}))
             if version.raw_observation_id:
                 raw_key = f"raw_observation:{version.raw_observation_id}"
                 node_keys.add(raw_key)
-                selected.append(_edge("raw_observation", version.raw_observation_id, "event_version", version.id, "normalized_to", generated_at=version.recorded_at, evidence={"payload_hash": version.payload_hash}))
+                if not any(item["id"] == f"raw_observation:{version.raw_observation_id}|normalized_to|event_version:{version.id}" for item in selected):
+                    selected.append(_edge("raw_observation", version.raw_observation_id, "event_version", version.id, "normalized_to", generated_at=version.recorded_at, evidence={"payload_hash": version.payload_hash}))
     if at is not None and object_type == "assessment":
         versions = list((await session.execute(select(InfrastructureAssessmentVersion).where((InfrastructureAssessmentVersion.assessment_id == object_id) | (InfrastructureAssessmentVersion.assessment_key == object_id), InfrastructureAssessmentVersion.generated_at <= at).order_by(InfrastructureAssessmentVersion.generated_at.desc()).limit(10))).scalars().all())
         for version in versions:
             version_key = f"assessment_version:{version.id}"
             objects[version_key] = _node("assessment_version", version.id, label=f"Assessment version {version.generated_at.isoformat()}", direct_or_derived="derived", generated_at=version.generated_at, transformation={"version": version.methodology_version, "run_kind": "historical_snapshot"}, evidence={"is_deleted": version.is_deleted, "valid_to": version.valid_to})
             node_keys.add(version_key)
-            selected.append(_edge("assessment_version", version.id, "assessment", object_id, "historical_version_of", generated_at=version.generated_at, evidence={"known_as_of": at.isoformat()}))
+            if not any(item["id"] == f"assessment_version:{version.id}|historical_version_of|assessment:{object_id}" for item in selected):
+                selected.append(_edge("assessment_version", version.id, "assessment", object_id, "historical_version_of", generated_at=version.generated_at, evidence={"known_as_of": at.isoformat()}))
     if at is not None and object_type == "asset":
         versions = list((await session.execute(select(InfrastructureAssetVersion).where(InfrastructureAssetVersion.asset_id == object_id, InfrastructureAssetVersion.recorded_at <= at).order_by(InfrastructureAssetVersion.recorded_at.desc()).limit(10))).scalars().all())
         for version in versions:
@@ -436,7 +538,8 @@ async def lineage(
             snapshot = _json(version.snapshot_json)
             objects[version_key] = _node("asset_version", version.id, label=f"Asset version {version.recorded_at.isoformat()}", direct_or_derived="derived", generated_at=version.recorded_at, transformation={"version": snapshot.get("normalized_version"), "run_kind": "historical_snapshot"}, evidence={"payload_hash": version.payload_hash, "valid_to": version.valid_to})
             node_keys.add(version_key)
-            selected.append(_edge("asset_version", version.id, "asset", object_id, "historical_version_of", generated_at=version.recorded_at, evidence={"known_as_of": at.isoformat()}))
+            if not any(item["id"] == f"asset_version:{version.id}|historical_version_of|asset:{object_id}" for item in selected):
+                selected.append(_edge("asset_version", version.id, "asset", object_id, "historical_version_of", generated_at=version.recorded_at, evidence={"known_as_of": at.isoformat()}))
     selected = selected[:limit]
     node_list = [objects[item] for item in sorted(node_keys) if item in objects]
     return {"object_type": object_type, "object_id": str(object_id), "direction": direction, "limit": limit, "truncated": truncated, "nodes": node_list, "edges": selected}
