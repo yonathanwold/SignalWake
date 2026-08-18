@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.adapters.nws import NWSAdapter
 from app.adapters.usgs import USGSAdapter
@@ -31,13 +32,22 @@ from app.graph_repository import (
 )
 from app.ingest import ensure_source, ingest_once, persist_normalized
 from app.logging import configure_logging
-from app.models import Event, InfrastructureRelationshipType, Source
+from app.models import Event, InfrastructureRelationshipType, Scenario, Source
 from app.repository import (
     get_event,
     get_infrastructure,
     list_events,
     list_infrastructure,
     source_response,
+)
+from app.scenarios import (
+    create_scenario,
+    execute_scenario,
+    get_run,
+    get_scenario,
+    result_payload,
+    run_payload,
+    scenario_payload,
 )
 from app.schemas import (
     AssessmentListResponse,
@@ -46,6 +56,7 @@ from app.schemas import (
     AssessmentResponse,
     EventListResponse,
     EventResponse,
+    GraphEdgeListResponse,
     GraphMetricsResponse,
     GraphNeighborsResponse,
     GraphNodeListResponse,
@@ -56,6 +67,12 @@ from app.schemas import (
     HealthResponse,
     InfrastructureListResponse,
     InfrastructureResponse,
+    ScenarioCreateRequest,
+    ScenarioGraphResponse,
+    ScenarioListResponse,
+    ScenarioResponse,
+    ScenarioResultResponse,
+    ScenarioRunResponse,
     SourceResponse,
 )
 
@@ -474,6 +491,30 @@ async def graph_node_detail(
     return node_response(asset, engine)
 
 
+@app.get("/graph/edges", response_model=GraphEdgeListResponse, tags=["graph"])
+async def graph_edges(
+    relationship_type: str | None = Query(None, description="One or comma-separated relationship types"),
+    limit: int = Query(100, ge=1, le=GRAPH_MAX_LIMIT),
+    cursor: int = Query(0, ge=0),
+    session: AsyncSession = Depends(session_dependency),
+) -> GraphEdgeListResponse:
+    selected_types = _relationship_filter(relationship_type)
+    _assets, engine = await load_graph_context(session, relationship_types=selected_types)
+    edges = [
+        edge
+        for edge in engine.edges.values()
+        if not selected_types or edge.relationship_type in selected_types
+    ]
+    edges = sorted(edges, key=lambda edge: (edge.relationship_type, edge.from_id, edge.to_id, edge.id))
+    visible = edges[cursor : cursor + limit]
+    return GraphEdgeListResponse(
+        items=[edge_response(edge) for edge in visible],
+        total=len(edges),
+        limit=limit,
+        next_cursor=str(cursor + limit) if cursor + limit < len(edges) else None,
+    )
+
+
 @app.get("/graph/nodes/{node_id}/neighbors", response_model=GraphNeighborsResponse, tags=["graph"])
 async def graph_node_neighbors(
     node_id: str,
@@ -618,3 +659,127 @@ async def graph_rebuild(
         ),
     )
     return GraphRebuildResponse.model_validate(stats.as_dict())
+
+
+@app.post("/scenarios", response_model=ScenarioResponse, status_code=201, tags=["scenarios"])
+async def scenarios_create(
+    request: ScenarioCreateRequest,
+    session: AsyncSession = Depends(session_dependency),
+) -> ScenarioResponse:
+    try:
+        scenario = await create_scenario(
+            session,
+            name=request.name,
+            scenario_type=request.scenario_type,
+            target_node_ids=request.target_node_ids,
+            target_edge_ids=request.target_edge_ids,
+            assumption=request.assumption,
+            duration_seconds=request.duration_seconds,
+            created_by=request.created_by,
+        )
+        await session.commit()
+        await session.refresh(scenario, ["targets"])
+    except LookupError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ScenarioResponse.model_validate(scenario_payload(scenario))
+
+
+@app.get("/scenarios", response_model=ScenarioListResponse, tags=["scenarios"])
+async def scenarios_list(
+    limit: int = Query(50, ge=1, le=100),
+    cursor: int = Query(0, ge=0),
+    session: AsyncSession = Depends(session_dependency),
+) -> ScenarioListResponse:
+    statement = select(Scenario).options(selectinload(Scenario.targets)).order_by(Scenario.created_at.desc(), Scenario.id)
+    scenarios = list((await session.execute(statement)).scalars().all())
+    visible = scenarios[cursor : cursor + limit]
+    return ScenarioListResponse(
+        items=[ScenarioResponse.model_validate(scenario_payload(item, include_baseline=False)) for item in visible],
+        total=len(scenarios),
+        limit=limit,
+        next_cursor=str(cursor + limit) if cursor + limit < len(scenarios) else None,
+    )
+
+
+@app.get("/scenarios/{scenario_id}", response_model=ScenarioResponse, tags=["scenarios"])
+async def scenarios_detail(
+    scenario_id: str,
+    session: AsyncSession = Depends(session_dependency),
+) -> ScenarioResponse:
+    scenario = await get_scenario(session, scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return ScenarioResponse.model_validate(scenario_payload(scenario))
+
+
+@app.post("/scenarios/{scenario_id}/runs", response_model=ScenarioRunResponse, status_code=201, tags=["scenarios"])
+async def scenarios_run(
+    scenario_id: str,
+    session: AsyncSession = Depends(session_dependency),
+) -> ScenarioRunResponse:
+    try:
+        run = await execute_scenario(session, scenario_id)
+        await session.commit()
+        await session.refresh(run, ["result"])
+    except LookupError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ScenarioRunResponse.model_validate(run_payload(run))
+
+
+@app.get("/scenario-runs/{run_id}", response_model=ScenarioRunResponse, tags=["scenarios"])
+async def scenario_run_detail(
+    run_id: str,
+    session: AsyncSession = Depends(session_dependency),
+) -> ScenarioRunResponse:
+    run = await get_run(session, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    return ScenarioRunResponse.model_validate(run_payload(run))
+
+
+@app.get("/scenario-runs/{run_id}/result", response_model=ScenarioResultResponse, tags=["scenarios"])
+async def scenario_run_result(
+    run_id: str,
+    session: AsyncSession = Depends(session_dependency),
+) -> ScenarioResultResponse:
+    run = await get_run(session, run_id)
+    if run is None or run.result is None:
+        raise HTTPException(status_code=404, detail="Scenario run result not found")
+    return ScenarioResultResponse.model_validate(result_payload(run.result))
+
+
+@app.get("/scenario-runs/{run_id}/graph", response_model=ScenarioGraphResponse, tags=["scenarios"])
+async def scenario_run_graph(
+    run_id: str,
+    state: str = Query("modified", pattern="^(baseline|modified)$"),
+    limit: int = Query(100, ge=1, le=GRAPH_MAX_LIMIT),
+    session: AsyncSession = Depends(session_dependency),
+) -> ScenarioGraphResponse:
+    run = await get_run(session, run_id)
+    if run is None or run.result is None:
+        raise HTTPException(status_code=404, detail="Scenario run result not found")
+    result = result_payload(run.result)
+    snapshot = result[state]
+    all_nodes = snapshot.get("nodes", [])
+    selected_nodes = all_nodes[:limit]
+    selected_ids = {item.get("id") for item in selected_nodes}
+    all_edges = [
+        edge
+        for edge in snapshot.get("edges", [])
+        if edge.get("from_id") in selected_ids and edge.get("to_id") in selected_ids
+    ]
+    edge_limit = min(len(all_edges), limit * 4)
+    return ScenarioGraphResponse(
+        run_id=run.id,
+        state=state,
+        graph_hash=snapshot.get("hash", ""),
+        nodes=selected_nodes,
+        edges=all_edges[:edge_limit],
+        truncated=len(all_nodes) > limit or len(all_edges) > edge_limit,
+        max_nodes=limit,
+    )

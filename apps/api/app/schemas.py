@@ -239,6 +239,95 @@ class AssessmentRecomputeResponse(BaseModel):
     items: list[AssessmentResponse]
 
 
+class ScenarioCreateRequest(BaseModel):
+    name: str = Field(default="Untitled graph scenario", min_length=1, max_length=200)
+    scenario_type: str = Field(min_length=1, max_length=64)
+    target_node_ids: list[str] = Field(default_factory=list, max_length=50)
+    target_edge_ids: list[str] = Field(default_factory=list, max_length=50)
+    assumption: str = Field(
+        default="Selected targets are unavailable in the modeled infrastructure graph.",
+        min_length=1,
+        max_length=1000,
+    )
+    duration_seconds: int | None = Field(default=None, ge=0, le=31_536_000)
+    created_by: str = Field(default="operator", min_length=1, max_length=128)
+
+
+class ScenarioTargetResponse(BaseModel):
+    id: str
+    target_kind: str
+    target_id: str
+    position: int
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScenarioResponse(BaseModel):
+    id: str
+    name: str
+    scenario_type: str
+    created_by: str
+    assumption: str
+    duration_seconds: int | None = None
+    methodology_version: str
+    input_hash: str
+    baseline_graph_hash: str
+    baseline_node_count: int
+    baseline_edge_count: int
+    baseline: dict[str, Any] = Field(default_factory=dict)
+    assumptions: dict[str, Any] = Field(default_factory=dict)
+    targets: list[ScenarioTargetResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScenarioListResponse(BaseModel):
+    items: list[ScenarioResponse]
+    total: int
+    limit: int
+    next_cursor: str | None = None
+
+
+class ScenarioResultResponse(BaseModel):
+    id: str
+    run_id: str
+    baseline: dict[str, Any] = Field(default_factory=dict)
+    modified: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class ScenarioRunResponse(BaseModel):
+    id: str
+    scenario_id: str
+    run_key: str
+    status: str
+    methodology_version: str
+    baseline_graph_hash: str
+    modified_graph_hash: str
+    started_at: datetime
+    completed_at: datetime
+    created_at: datetime
+    reproducibility: dict[str, Any] = Field(default_factory=dict)
+    result: ScenarioResultResponse | None = None
+
+
+class ScenarioGraphResponse(BaseModel):
+    run_id: str
+    state: str
+    graph_hash: str
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    truncated: bool = False
+    max_nodes: int
+
+
+class GraphEdgeListResponse(BaseModel):
+    items: list[GraphEdgeResponse]
+    total: int
+    limit: int
+
+
 class HealthResponse(BaseModel):
     status: str
     service: str

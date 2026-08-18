@@ -382,3 +382,117 @@ class InfrastructureAssessment(Base):
 
     event: Mapped[Event] = relationship(backref="assessments")
     affected_asset: Mapped[InfrastructureAsset | None] = relationship(backref="assessments")
+
+
+class ScenarioType(str, enum.Enum):
+    """Supported second-order graph mutations.
+
+    These values describe only removal in the modeled relationship graph. They
+    are deliberately not outage, service, or economic event types.
+    """
+
+    ASSET_UNAVAILABLE = "ASSET_UNAVAILABLE"
+    EDGE_UNAVAILABLE = "EDGE_UNAVAILABLE"
+    MULTIPLE_ASSETS_UNAVAILABLE = "MULTIPLE_ASSETS_UNAVAILABLE"
+
+
+class ScenarioTargetKind(str, enum.Enum):
+    NODE = "NODE"
+    EDGE = "EDGE"
+
+
+class Scenario(Base):
+    """A reproducible, user-authored graph mutation definition."""
+
+    __tablename__ = "scenarios"
+    __table_args__ = (
+        Index("ix_scenario_type_created", "scenario_type", "created_at"),
+        Index("ix_scenario_methodology", "methodology_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(200))
+    scenario_type: Mapped[str] = mapped_column(String(64), index=True)
+    created_by: Mapped[str] = mapped_column(String(128), default="operator")
+    assumption: Mapped[str] = mapped_column(Text)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    methodology_version: Mapped[str] = mapped_column(String(64), index=True)
+    input_hash: Mapped[str] = mapped_column(String(64))
+    baseline_graph_hash: Mapped[str] = mapped_column(String(64), index=True)
+    baseline_node_count: Mapped[int] = mapped_column(Integer)
+    baseline_edge_count: Mapped[int] = mapped_column(Integer)
+    baseline_snapshot_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    assumptions_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    targets: Mapped[list[ScenarioTarget]] = relationship(
+        back_populates="scenario", cascade="all, delete-orphan", order_by="ScenarioTarget.position"
+    )
+    runs: Mapped[list[ScenarioRun]] = relationship(
+        back_populates="scenario", cascade="all, delete-orphan", order_by="ScenarioRun.created_at"
+    )
+
+
+class ScenarioTarget(Base):
+    """Explicit node/edge targets captured at scenario creation time."""
+
+    __tablename__ = "scenario_targets"
+    __table_args__ = (
+        UniqueConstraint("scenario_id", "target_kind", "target_id", name="uq_scenario_target"),
+        Index("ix_scenario_target_lookup", "target_kind", "target_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    scenario_id: Mapped[str] = mapped_column(ForeignKey("scenarios.id", ondelete="CASCADE"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(16))
+    target_id: Mapped[str] = mapped_column(String(36))
+    position: Mapped[int] = mapped_column(Integer)
+    target_snapshot_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+
+    scenario: Mapped[Scenario] = relationship(back_populates="targets")
+
+
+class ScenarioRun(Base):
+    """One explicit deterministic execution of a scenario definition."""
+
+    __tablename__ = "scenario_runs"
+    __table_args__ = (
+        UniqueConstraint("run_key", name="uq_scenario_run_key"),
+        Index("ix_scenario_run_scenario_created", "scenario_id", "created_at"),
+        Index("ix_scenario_run_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    scenario_id: Mapped[str] = mapped_column(ForeignKey("scenarios.id", ondelete="CASCADE"), index=True)
+    run_key: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), default="completed")
+    methodology_version: Mapped[str] = mapped_column(String(64), index=True)
+    baseline_graph_hash: Mapped[str] = mapped_column(String(64))
+    modified_graph_hash: Mapped[str] = mapped_column(String(64))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    reproducibility_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    scenario: Mapped[Scenario] = relationship(back_populates="runs")
+    result: Mapped[ScenarioResult | None] = relationship(
+        back_populates="run", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class ScenarioResult(Base):
+    """Persisted baseline/modified evidence for one scenario run."""
+
+    __tablename__ = "scenario_results"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_scenario_result_run"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("scenario_runs.id", ondelete="CASCADE"), index=True)
+    baseline_snapshot_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    modified_snapshot_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    metrics_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    evidence_json: Mapped[str] = mapped_column(JSONText(), default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    run: Mapped[ScenarioRun] = relationship(back_populates="result")
