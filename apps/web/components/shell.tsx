@@ -35,7 +35,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <aside className="side-nav" aria-label="Primary navigation">
         <div className="side-nav-label">SURFACES</div>
         <nav>{navItems.map(({ href, label, icon: Icon }) => <Link key={href} href={href} className={`nav-item ${pathname === href ? "nav-item-active" : ""}`}><Icon size={16} /><span>{label}</span>{pathname === href && <span className="nav-active-mark" />}</Link>)}</nav>
-        <div className="side-nav-footer"><div className="footer-line" /><span>PHASE 06</span><span>DETERMINISTIC CORE</span></div>
+        <div className="side-nav-footer"><div className="footer-line" /><span>PHASE 07</span><span>DETERMINISTIC CORE</span></div>
       </aside>
       <main className="main-content">{children}</main>
     </div>
