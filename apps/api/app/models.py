@@ -167,6 +167,7 @@ class Source(Base):
 
     raw_observations: Mapped[list[RawObservation]] = relationship(back_populates="source")
     events: Mapped[list[Event]] = relationship(back_populates="source")
+    history: Mapped[list[SourceStateVersion]] = relationship(back_populates="source")
 
 
 class InfrastructureSource(Base):
@@ -186,6 +187,7 @@ class InfrastructureSource(Base):
 
     raw_records: Mapped[list[RawInfrastructureRecord]] = relationship(back_populates="source")
     assets: Mapped[list[InfrastructureAsset]] = relationship(back_populates="source")
+    history: Mapped[list[InfrastructureSourceVersion]] = relationship(back_populates="source")
 
 
 class RawInfrastructureRecord(Base):
@@ -246,6 +248,7 @@ class InfrastructureAsset(Base):
     normalized_version: Mapped[str] = mapped_column(String(32))
 
     source: Mapped[InfrastructureSource] = relationship(back_populates="assets")
+    history: Mapped[list[InfrastructureAssetVersion]] = relationship(back_populates="asset")
 
 
 class InfrastructureRelationship(Base):
@@ -342,6 +345,7 @@ class Event(Base):
     classification: Mapped[str] = mapped_column(String(16), default="LIVE")
 
     source: Mapped[Source] = relationship(back_populates="events")
+    history: Mapped[list[EventVersion]] = relationship(back_populates="event")
 
 
 class InfrastructureAssessment(Base):
@@ -382,6 +386,117 @@ class InfrastructureAssessment(Base):
 
     event: Mapped[Event] = relationship(backref="assessments")
     affected_asset: Mapped[InfrastructureAsset | None] = relationship(backref="assessments")
+    history: Mapped[list[InfrastructureAssessmentVersion]] = relationship(back_populates="assessment")
+
+
+class EventVersion(Base):
+    """Append-only knowledge-time snapshot for one canonical source event.
+
+    ``recorded_at`` is when SIGNALWAKE learned this version, not when the
+    source says the event occurred.  ``valid_to`` is maintained as the next
+    recorded knowledge time for the same stable event identity.
+    """
+
+    __tablename__ = "event_versions"
+    __table_args__ = (
+        UniqueConstraint("event_id", "payload_hash", name="uq_event_version_payload"),
+        Index("ix_event_version_identity_recorded", "source_id", "source_event_id", "recorded_at"),
+        Index("ix_event_version_recorded", "recorded_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"), index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), index=True)
+    source_event_id: Mapped[str] = mapped_column(String(512), index=True)
+    raw_observation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("raw_observations.id"), nullable=True, index=True
+    )
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload_hash: Mapped[str] = mapped_column(String(64), index=True)
+    snapshot_json: Mapped[str] = mapped_column(Text)
+
+    event: Mapped[Event] = relationship(back_populates="history")
+
+
+class SourceStateVersion(Base):
+    """Append-only source ingest/freshness state at a knowledge-time boundary."""
+
+    __tablename__ = "source_state_versions"
+    __table_args__ = (
+        Index("ix_source_state_source_recorded", "source_id", "recorded_at"),
+        Index("ix_source_state_recorded", "recorded_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), index=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    snapshot_json: Mapped[str] = mapped_column(Text)
+
+    source: Mapped[Source] = relationship(back_populates="history")
+
+
+class InfrastructureSourceVersion(Base):
+    """Historical import state for a reference infrastructure source."""
+
+    __tablename__ = "infrastructure_source_versions"
+    __table_args__ = (
+        Index("ix_infra_source_state_source_recorded", "source_id", "recorded_at"),
+        Index("ix_infra_source_state_recorded", "recorded_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_id: Mapped[str] = mapped_column(ForeignKey("infrastructure_sources.id"), index=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    snapshot_json: Mapped[str] = mapped_column(Text)
+
+    source: Mapped[InfrastructureSource] = relationship(back_populates="history")
+
+
+class InfrastructureAssetVersion(Base):
+    """Append-only imported asset snapshot keyed by source asset identity."""
+
+    __tablename__ = "infrastructure_asset_versions"
+    __table_args__ = (
+        UniqueConstraint("asset_id", "payload_hash", name="uq_infrastructure_asset_version_payload"),
+        Index("ix_infra_asset_version_identity_recorded", "source_id", "source_asset_id", "recorded_at"),
+        Index("ix_infra_asset_version_recorded", "recorded_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    asset_id: Mapped[str] = mapped_column(ForeignKey("infrastructure_assets.id"), index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("infrastructure_sources.id"), index=True)
+    source_asset_id: Mapped[str] = mapped_column(String(512), index=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload_hash: Mapped[str] = mapped_column(String(64), index=True)
+    snapshot_json: Mapped[str] = mapped_column(Text)
+
+    asset: Mapped[InfrastructureAsset] = relationship(back_populates="history")
+
+
+class InfrastructureAssessmentVersion(Base):
+    """Append-only generated assessment snapshot, including tombstones."""
+
+    __tablename__ = "infrastructure_assessment_versions"
+    __table_args__ = (
+        Index("ix_assessment_version_key_generated", "assessment_key", "generated_at"),
+        Index("ix_assessment_version_generated", "generated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    assessment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("infrastructure_assessments.id"), nullable=True, index=True
+    )
+    assessment_key: Mapped[str] = mapped_column(String(768), index=True)
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"), index=True)
+    methodology_version: Mapped[str] = mapped_column(String(32), index=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    snapshot_json: Mapped[str] = mapped_column(Text)
+
+    assessment: Mapped[InfrastructureAssessment | None] = relationship(back_populates="history")
 
 
 class ScenarioType(str, enum.Enum):

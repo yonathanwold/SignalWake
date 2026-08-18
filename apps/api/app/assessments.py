@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.graph import GraphEdge, GraphEngine, GraphNode
+from app.history import record_assessment_version
 from app.models import (
     AssessmentStatus,
     AssessmentType,
@@ -429,12 +430,13 @@ async def recompute_event_assessments(
     )
     existing = {item.assessment_key: item for item in existing_result.scalars().all()}
     deleted_count = 0
+    now = datetime.now(timezone.utc)
+    deleted_keys: list[str] = []
     for key, item in existing.items():
         if key not in desired:
             await session.delete(item)
             deleted_count += 1
-
-    now = datetime.now(timezone.utc)
+            deleted_keys.append(key)
     inserted_count = updated_count = 0
     for key in sorted(desired):
         values = desired[key]
@@ -448,6 +450,31 @@ async def recompute_event_assessments(
             current.updated_at = now
             updated_count += 1
     await session.flush()
+    for key in sorted(desired):
+        current = existing.get(key)
+        if current is None:
+            current = await session.scalar(
+                select(InfrastructureAssessment).where(InfrastructureAssessment.assessment_key == key)
+            )
+        if current is not None:
+            await record_assessment_version(
+                session,
+                current,
+                assessment_key=key,
+                event_id=event.id,
+                methodology_version=METHODOLOGY_VERSION,
+                generated_at=now,
+            )
+    for key in deleted_keys:
+        await record_assessment_version(
+            session,
+            None,
+            assessment_key=key,
+            event_id=event.id,
+            methodology_version=METHODOLOGY_VERSION,
+            generated_at=now,
+            is_deleted=True,
+        )
     result_items = list(
         (
             await session.execute(

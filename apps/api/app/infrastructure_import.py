@@ -12,6 +12,7 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.history import record_asset_version, record_infrastructure_source_state
 from app.models import (
     InfrastructureAsset,
     InfrastructureSource,
@@ -274,6 +275,7 @@ async def import_payload(
                     )
                 )
             ).scalar_one_or_none()
+            version_changed = asset is None or asset.payload_hash != digest
             geometry_json = json.dumps(normalized["geometry"], sort_keys=True)
             provenance_json = json.dumps(
                 [
@@ -325,6 +327,8 @@ async def import_payload(
             raw.processing_state = ProcessingState.NORMALIZED.value
             await session.flush()
             await _sync_postgis_geometry(session, asset)
+            if version_changed:
+                await record_asset_version(session, asset, source, recorded_at=fetched_at)
             processed += 1
             if processed % batch_size == 0:
                 await session.commit()
@@ -336,6 +340,7 @@ async def import_payload(
     source.last_import_at = fetched_at
     source.last_import_count = processed
     source.last_import_error = f"{skipped_count} malformed record(s) skipped" if skipped_count else None
+    await record_infrastructure_source_state(session, source, fetched_at)
     await session.commit()
     return InfrastructureImportStats(
         source_key=source_key,

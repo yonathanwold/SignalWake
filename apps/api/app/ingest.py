@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.base import AdapterError, NormalizedEvent, SourceAdapter, payload_hash
+from app.history import record_event_version, record_source_state
 from app.models import Event, ProcessingState, RawObservation, Source
 
 log = structlog.get_logger(__name__)
@@ -76,6 +77,7 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
             source.last_error = error
             source.last_http_status = adapter.last_http_status
             source.freshness_seconds = None
+            await record_source_state(session, source, attempted_at)
             log.error(
                 "source_ingest_failed",
                 source=adapter.key,
@@ -148,6 +150,7 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
                 fetched_count=len(features),
                 normalized_count=normalized_count,
             )
+        await record_source_state(session, source, attempted_at)
         results.append(
             AdapterIngestResult(
                 source_key=adapter.key,
@@ -233,6 +236,7 @@ async def persist_normalized(
         if classification == "LIVE" or existing.classification != "LIVE":
             existing.classification = classification
         raw.processing_state = ProcessingState.NORMALIZED.value
+        await record_event_version(session, existing, source)
         return existing
     event = Event(
         source_id=source.id,
@@ -279,4 +283,5 @@ async def persist_normalized(
                 )
             )
         ).scalar_one()
+    await record_event_version(session, event, source)
     return event
