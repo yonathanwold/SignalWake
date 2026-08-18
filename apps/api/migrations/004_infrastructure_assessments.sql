@@ -33,4 +33,3 @@ CREATE INDEX IF NOT EXISTS ix_assessment_status_score
   ON infrastructure_assessments (status, score);
 CREATE INDEX IF NOT EXISTS ix_assessment_methodology
   ON infrastructure_assessments (event_id, methodology_version);
-
