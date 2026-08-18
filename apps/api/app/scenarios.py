@@ -260,15 +260,28 @@ def execute_graph_scenario(
         max(0.0, min(100.0, 100.0 * (0.45 * reachability_ratio + 0.35 * largest_ratio + 0.20 * alternate_ratio - 0.10 * path_inflation))),
         4,
     )
-    baseline_ids = set(baseline.nodes)
+    # Component membership gives the same reachability consequence as a
+    # pairwise search here, but keeps this explainability pass bounded for a
+    # large imported graph.  ``path_analysis`` remains separately capped.
+    baseline_component_by_node = {
+        node_id: component_index
+        for component_index, component in enumerate(baseline_components)
+        for node_id in component
+    }
+    modified_component_by_node = {
+        node_id: component_index
+        for component_index, component in enumerate(scenario_components)
+        for node_id in component
+    }
+    baseline_to_modified_components: dict[int, set[int]] = {}
+    for node_id, modified_component in modified_component_by_node.items():
+        baseline_component = baseline_component_by_node.get(node_id)
+        if baseline_component is not None:
+            baseline_to_modified_components.setdefault(baseline_component, set()).add(modified_component)
     disconnected = sorted(
         node_id
         for node_id in modified.nodes
-        if baseline.shortest_path(node_id, node_id) and any(
-            baseline.shortest_path(node_id, other, max_hops=max(0, len(baseline.nodes) - 1))
-            and modified.shortest_path(node_id, other, max_hops=max(0, len(modified.nodes) - 1)) is None
-            for other in baseline_ids - {node_id}
-        )
+        if len(baseline_to_modified_components.get(baseline_component_by_node.get(node_id, -1), set())) > 1
     )
     baseline_articulation = sorted(baseline.articulation_points())
     scenario_articulation = sorted(modified.articulation_points())
