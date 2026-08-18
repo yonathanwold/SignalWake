@@ -199,7 +199,7 @@ time and never by the mutable current projection.
 - `GET /sources` — source registry with latest fetch status and freshness.
 - `GET /sources/catalog` or `GET /layers` — catalog of live, near-real-time, reference, credentialed, and unconnected families with explicit geometry, freshness, and provenance metadata.
 - `GET /layers/{key}/data` — bounded GeoJSON-like projection for a connected event/reference layer; unavailable layers return no features and their honest status.
-- `GET /events` — latest-first events with `bbox`, `source`, `type`, `severity`, `start_time`, `end_time`, `limit` (maximum 1,000), `cursor`, and `page` filters. The default and maximum operational window is the past 48 hours UTC; observed/effective/received times and overlapping validity intervals are included.
+- `GET /events` — latest-first events with `bbox`, `source`, `type`, `severity`, `start_time`, `end_time`, `limit` (maximum 2,000), `cursor`, and `page` filters. The default and maximum operational window is the past 48 hours UTC; observed/effective/received times and overlapping validity intervals are included.
 - `GET /events/{id}` — event detail including provenance and raw observation reference.
 - `GET /infrastructure` — bounded reference assets with `bbox`, `type`, `source`, `region`, `limit`, `cursor`, and `page` filters.
 - `GET /infrastructure/{id}` — one reference asset with geometry, source attribution/license, timestamps, and provenance.

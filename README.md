@@ -4,7 +4,7 @@ SIGNALWAKE is a real-time geospatial event intelligence foundation. It turns aut
 
 The first slice is intentionally honest about its boundary:
 
-- `LIVE` means a successful startup fetch, normalization, and persistence pass from a connected adapter: NWS alerts, NWS station observations, USGS earthquakes, bounded USGS water states, NHC systems, NOAA CO-OPS, or configured NASA FIRMS/AirNow.
+- `LIVE` means a successful startup fetch, normalization, and persistence pass from a connected adapter: NWS alerts, NWS station observations, USGS earthquakes, bounded USGS water states, NHC systems, NOAA CO-OPS, or configured NASA FIRMS/AirNow. Operational API pages are bounded to 2,000 records within the past 48 hours.
 - `DEMO` means deterministic fixture data used only when startup ingestion is disabled, a source has no usable live events, or the browser cannot reach the API.
 - `DERIVED` means normalized event fields such as severity and type; it does not mean an infrastructure impact prediction.
 - `REFERENCE` means an imported infrastructure asset whose geometry and metadata came from a named public source. It is intentionally separate from live event observations.

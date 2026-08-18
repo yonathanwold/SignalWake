@@ -401,3 +401,47 @@ a { color: inherit; }
 
 /* Keep live-state indicators crisp, without halo or glow treatments. */
 .replay-state-ready, .state-pulse, .severity-critical { box-shadow: none; }
+
+.side-nav-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; margin-bottom: 10px; padding: 6px 11px; color: var(--faint); background: transparent; border: 1px solid var(--line); font: 9px var(--mono); letter-spacing: .1em; cursor: pointer; }
+.side-nav-toggle:hover, .side-nav-toggle:focus-visible { color: var(--text); border-color: var(--line-strong); }
+.side-nav-toggle svg { transition: transform 120ms ease; }
+.side-nav-collapsed { width: 58px; padding-left: 7px; padding-right: 7px; }
+.side-nav-collapsed .side-nav-toggle { justify-content: center; padding-left: 0; padding-right: 0; }
+.side-nav-collapsed .side-nav-toggle svg { transform: rotate(180deg); }
+.side-nav-collapsed .side-nav-toggle span, .side-nav-collapsed .side-nav-label, .side-nav-collapsed .nav-item span:not(.nav-active-mark), .side-nav-collapsed .side-nav-footer { display: none; }
+.side-nav-collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
+
+/* The map is the operational workspace: keep its chrome compact and let the
+   viewport carry the map. Inspectors are selection drawers, not empty columns. */
+.map-dashboard { height: calc(100dvh - 56px); min-height: 0; display: flex; flex-direction: column; }
+.map-dashboard .page-utility { flex: 0 0 auto; }
+.map-dashboard .map-layout { position: relative; display: block; flex: 1 1 auto; min-height: 0; margin-top: 0; }
+.map-dashboard .map-section { height: 100%; min-height: 0; display: flex; flex-direction: column; border-right: 0; }
+.map-dashboard .map-section .map-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
+.map-dashboard > .source-strip { display: none; }
+.map-dashboard .map-layout > .inspector { position: absolute; z-index: 5; top: 0; right: 0; bottom: 0; width: min(330px, 34vw); overflow-y: auto; border-left: 1px solid var(--line-strong); }
+.map-layer-rail { transition: width 120ms ease; }
+.map-layer-rail-collapsed { width: 112px; }
+.layer-rail-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px; color: var(--text); background: transparent; border: 0; border-bottom: 1px solid var(--line); font: 10px var(--mono); letter-spacing: .08em; text-align: left; cursor: pointer; }
+.layer-rail-toggle:hover { background: #131313; }
+.layer-rail-toggle svg { flex: 0 0 auto; transition: transform 120ms ease; }
+.map-layer-rail-collapsed .layer-rail-toggle svg { transform: rotate(180deg); }
+.map-layer-rail-collapsed .layer-rail-body { display: none; }
+.inspector-topline-actions { display: inline-flex; align-items: center; gap: 7px; }
+.inspector-close { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--muted); background: transparent; border: 1px solid var(--line-strong); font: 17px/1 var(--sans); cursor: pointer; }
+.inspector-close:hover, .inspector-close:focus-visible { color: var(--text); border-color: var(--text); }
+
+@media (max-width: 900px) {
+  .side-nav-collapsed { width: 100%; height: 38px; min-height: 38px; padding: 0 9px; overflow: hidden; align-items: center; }
+  .side-nav-collapsed .side-nav-toggle { width: 30px; flex: 0 0 30px; min-height: 28px; margin: 0; padding-left: 0; padding-right: 0; }
+  .side-nav-collapsed nav { display: none; }
+  .map-dashboard { height: calc(100dvh - 56px - 49px); }
+  .map-dashboard .map-layout > .inspector { width: min(360px, 78vw); }
+}
+
+@media (max-width: 600px) {
+  .map-dashboard { height: calc(100dvh - 56px - 49px); }
+  .map-dashboard .map-layout > .inspector { top: auto; left: 0; right: 0; bottom: 0; width: 100%; max-height: 64%; border-left: 0; border-top: 1px solid var(--line-strong); }
+  .map-dashboard .map-layer-rail { width: 174px; }
+  .map-dashboard .map-layer-rail-collapsed { width: 108px; }
+}

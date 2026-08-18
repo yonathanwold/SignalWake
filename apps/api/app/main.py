@@ -607,7 +607,7 @@ async def events(
     severity: str | None = Query(None),
     start_time: datetime | None = Query(None),
     end_time: datetime | None = Query(None),
-    limit: int = Query(50, ge=1, le=1000),
+    limit: int = Query(50, ge=1, le=2000),
     cursor: int = Query(0, ge=0),
     page: int | None = Query(None, ge=1),
     session: AsyncSession = Depends(session_dependency),
@@ -664,6 +664,7 @@ def _event_layer_feature(item: EventResponse) -> dict[str, object] | None:
             "severity": item.severity,
             "status": item.status,
             "classification": item.classification,
+            "magnitude": item.magnitude,
             "observed_at": item.observed_at.isoformat(),
             "provenance": item.provenance[0].model_dump(mode="json") if item.provenance else {},
         },
@@ -674,7 +675,7 @@ def _event_layer_feature(item: EventResponse) -> dict[str, object] | None:
 @app.get("/layers/{layer_key}/data", response_model=LayerDataResponse, tags=["layers"])
 async def layer_data(
     layer_key: str,
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=2000),
     session: AsyncSession = Depends(session_dependency),
 ) -> LayerDataResponse:
     specs = specs_by_key()

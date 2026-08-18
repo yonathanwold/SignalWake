@@ -27,6 +27,7 @@ export type CanonicalEvent = {
   received_at: string;
   latitude: number | null;
   longitude: number | null;
+  magnitude?: number | null;
   geometry: { type: string; coordinates: unknown } | null;
   classification: "LIVE" | "DEMO" | "HISTORICAL" | "SIMULATED";
   provenance: Provenance[];

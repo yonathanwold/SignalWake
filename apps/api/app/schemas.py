@@ -95,6 +95,7 @@ class EventResponse(BaseModel):
     received_at: datetime
     latitude: float | None = None
     longitude: float | None = None
+    magnitude: float | None = None
     geometry: dict[str, Any] | None = None
     classification: str = "DERIVED"
     provenance: list[Provenance] = Field(default_factory=list)

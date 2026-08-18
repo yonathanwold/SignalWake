@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { CanonicalEvent, InfrastructureAsset, LayerCatalogItem } from "../lib/types";
-import { AlertIcon, MapIcon, QuakeIcon } from "./icons";
+import { AlertIcon, ChevronIcon, MapIcon, QuakeIcon } from "./icons";
 import { SeverityDot } from "./status-pill";
 
 type MapSurfaceProps = {
@@ -26,11 +26,39 @@ const CARTO_DARK_TILES = [
   "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
 ];
 
+const ACTIVE_EVENT_LAYER_KEYS = new Set(["nws_alerts", "nws_observations", "usgs_earthquakes", "usgs_water", "nhc_systems", "noaa_coops", "nasa_firms", "airnow"]);
+const ACTIVE_LAYER_STATUSES = new Set(["LIVE", "NEAR_REAL_TIME", "DEGRADED"]);
+const SOURCE_POINT_STYLES: Record<string, { color: string; halo: string; radius: number }> = {
+  nws_observations: { color: "#6ab6ff", halo: "#6ab6ff", radius: 4 },
+  usgs_water: { color: "#4b8fff", halo: "#4b8fff", radius: 4 },
+  nhc: { color: "#ed6868", halo: "#ed6868", radius: 6 },
+  noaa_coops: { color: "#22c7a8", halo: "#22c7a8", radius: 5 },
+  nasa_firms: { color: "#f1ad38", halo: "#f1ad38", radius: 5 },
+  airnow: { color: "#a986f5", halo: "#a986f5", radius: 4 },
+};
+
+function isActiveEventLayer(item: LayerCatalogItem) {
+  return Boolean(item.source_key && ACTIVE_EVENT_LAYER_KEYS.has(item.key) && ACTIVE_LAYER_STATUSES.has(item.status));
+}
+
+function activeSourceKeys(catalog: LayerCatalogItem[]) {
+  const knownRows = catalog.filter((item) => ACTIVE_EVENT_LAYER_KEYS.has(item.key));
+  const catalogRows = knownRows.filter(isActiveEventLayer);
+  return knownRows.length > 0
+    ? new Set(catalogRows.map((item) => item.source_key as string))
+    : new Set(["nws", "usgs"]);
+}
+
+function visibleEvents(events: CanonicalEvent[], catalog: LayerCatalogItem[]) {
+  const sources = activeSourceKeys(catalog);
+  return events.filter((event) => sources.has(event.source_key));
+}
+
 type MapGeometry = { type: string; coordinates: unknown };
 type MapFeature = {
   type: "Feature";
   id?: string;
-  properties: Record<string, string>;
+  properties: Record<string, unknown>;
   geometry: MapGeometry;
 };
 type MapCollection = { type: "FeatureCollection"; features: MapFeature[] };
@@ -72,6 +100,8 @@ function eventCollection(events: CanonicalEvent[]): MapCollection {
         source: event.source_key,
         title: event.title,
         classification: event.classification,
+        type: event.type,
+        magnitude: event.magnitude ?? null,
       },
       geometry,
     });
@@ -116,17 +146,22 @@ function infrastructureCollection(infrastructure: InfrastructureAsset[]): MapCol
 function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[], catalog: LayerCatalogItem[] = []) {
   const severityColor = ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "watch", "#f1ad38", "#22c7a8"];
   const polygonGeometry = ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false];
-  const sourceKeys = Array.from(new Set([
-    ...events.map((event) => event.source_key),
-    ...catalog.filter((item) => item.source_key && ["LIVE", "NEAR_REAL_TIME", "DEGRADED"].includes(item.status)).map((item) => item.source_key as string),
-  ])).filter((source) => source !== "nws" && source !== "usgs");
+  const earthquakeRadius = ["interpolate", ["linear"], ["coalesce", ["get", "magnitude"], 0], 0, 4, 4, 6, 5, 9, 6, 13];
+  const earthquakeHaloRadius = ["interpolate", ["linear"], ["coalesce", ["get", "magnitude"], 0], 0, 8, 4, 12, 5, 18, 6, 25];
+  const activeSources = activeSourceKeys(catalog);
+  const mapEvents = events.filter((event) => activeSources.has(event.source_key));
+  const sourceKeys = Array.from(new Set(mapEvents.map((event) => event.source_key))).filter((source) => source !== "nws" && source !== "usgs");
   const dynamicEventLayers = sourceKeys.flatMap((source) => {
     const safeSource = source.replace(/[^a-z0-9_-]/gi, "-");
     const filter = ["all", ["==", ["get", "source"], source]];
+    const pointStyle = SOURCE_POINT_STYLES[source] ?? { color: "#22c7a8", halo: "#22c7a8", radius: 5 };
     return [
       { id: `event-${safeSource}-polygons`, type: "fill", source: "events", filter: [...filter, polygonGeometry], paint: { "fill-color": severityColor, "fill-opacity": 0.18 } },
       { id: `event-${safeSource}-polygon-outline`, type: "line", source: "events", filter: [...filter, polygonGeometry], paint: { "line-color": severityColor, "line-width": 2, "line-opacity": 0.9 } },
-      { id: `event-${safeSource}-points`, type: "circle", source: "event-points", filter: [...filter, ["==", ["geometry-type"], "Point"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 5, "circle-color": severityColor, "circle-stroke-color": "#080808", "circle-stroke-width": 1.5 } },
+      { id: `event-${safeSource}-point-halo`, type: "circle", source: "event-points", filter: [...filter, ["==", ["geometry-type"], "Point"], ["!", ["has", "point_count"]]], paint: { "circle-radius": pointStyle.radius + 5, "circle-color": "transparent", "circle-stroke-color": pointStyle.halo, "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.38 } },
+      { id: `event-${safeSource}-point-ring`, type: "circle", source: "event-points", filter: [...filter, ["==", ["geometry-type"], "Point"], ["!", ["has", "point_count"]]], paint: { "circle-radius": pointStyle.radius + 2.5, "circle-color": "#09111b", "circle-stroke-color": pointStyle.color, "circle-stroke-width": 1.8, "circle-stroke-opacity": 0.95 } },
+      { id: `event-${safeSource}-points`, type: "circle", source: "event-points", filter: [...filter, ["==", ["geometry-type"], "Point"], ["!", ["has", "point_count"]]], paint: { "circle-radius": pointStyle.radius, "circle-color": "#09111b", "circle-stroke-color": pointStyle.color, "circle-stroke-width": 1.2 } },
+      { id: `event-${safeSource}-point-core`, type: "circle", source: "event-points", filter: [...filter, ["==", ["geometry-type"], "Point"], ["!", ["has", "point_count"]]], paint: { "circle-radius": Math.max(1.6, pointStyle.radius * 0.34), "circle-color": pointStyle.color, "circle-stroke-color": "#09111b", "circle-stroke-width": 0.8 } },
     ];
   });
   return {
@@ -138,8 +173,8 @@ function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[
         tileSize: 256,
         attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a> <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">© CARTO</a>',
       },
-      events: { type: "geojson", data: eventCollection(events) },
-      "event-points": { type: "geojson", data: eventPointCollection(events), cluster: true, clusterRadius: 42, clusterMaxZoom: 5 },
+      events: { type: "geojson", data: eventCollection(mapEvents) },
+      "event-points": { type: "geojson", data: eventPointCollection(mapEvents), cluster: true, clusterRadius: 42, clusterMaxZoom: 5 },
       infrastructure: { type: "geojson", data: infrastructureCollection(infrastructure) },
     },
     layers: [
@@ -147,11 +182,13 @@ function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[
       { id: "basemap", type: "raster", source: BASEMAP_SOURCE_ID, paint: { "raster-opacity": 1 } },
       { id: "event-polygons", type: "fill", source: "events", filter: ["all", ["==", ["get", "source"], "nws"], polygonGeometry], paint: { "fill-color": severityColor, "fill-opacity": 0.2 } },
       { id: "event-polygon-outline", type: "line", source: "events", filter: ["all", ["==", ["get", "source"], "nws"], polygonGeometry], paint: { "line-color": severityColor, "line-width": 2, "line-opacity": 0.95 } },
-      { id: "event-clusters", type: "circle", source: "event-points", filter: ["has", "point_count"], paint: { "circle-radius": ["step", ["get", "point_count"], 14, 25, 18, 100, 23], "circle-color": "#22c7a8", "circle-stroke-color": "#071312", "circle-stroke-width": 2, "circle-opacity": 0.9 } },
-      { id: "event-nws-point-halo", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "nws"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 10, "circle-color": "transparent", "circle-stroke-color": severityColor, "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.5 } },
-      { id: "event-nws-points", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "nws"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 5, "circle-color": severityColor, "circle-stroke-color": "#09111b", "circle-stroke-width": 1.5 } },
-      { id: "event-usgs-point-halo", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 10, "circle-color": "transparent", "circle-stroke-color": severityColor, "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.5 } },
-      { id: "event-usgs-points", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 5, "circle-color": severityColor, "circle-stroke-color": "#09111b", "circle-stroke-width": 1.5 } },
+      { id: "event-clusters", type: "circle", source: "event-points", filter: ["has", "point_count"], paint: { "circle-radius": ["step", ["get", "point_count"], 14, 25, 18, 100, 23], "circle-color": "#09111b", "circle-stroke-color": "#22c7a8", "circle-stroke-width": ["step", ["get", "point_count"], 2, 25, 2.5, 100, 3.2], "circle-stroke-opacity": 0.96, "circle-opacity": 0.98 } },
+      { id: "event-nws-point-halo", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "nws"], ["!", ["has", "point_count"]]], paint: { "circle-radius": ["match", ["get", "severity"], "critical", 14, "warning", 12, "advisory", 10, 8], "circle-color": "transparent", "circle-stroke-color": severityColor, "circle-stroke-width": 1.4, "circle-stroke-opacity": 0.65 } },
+      { id: "event-nws-points", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "nws"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 5.5, "circle-color": "#09111b", "circle-stroke-color": severityColor, "circle-stroke-width": 1.8 } },
+      { id: "event-nws-point-core", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "nws"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 2, "circle-color": severityColor, "circle-stroke-color": "#09111b", "circle-stroke-width": 0.8 } },
+      { id: "event-usgs-point-halo", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"], ["!", ["has", "point_count"]]], paint: { "circle-radius": earthquakeHaloRadius, "circle-color": "transparent", "circle-stroke-color": "#6ab6ff", "circle-stroke-width": 1.4, "circle-stroke-opacity": 0.68 } },
+      { id: "event-usgs-points", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"], ["!", ["has", "point_count"]]], paint: { "circle-radius": earthquakeRadius, "circle-color": "#09111b", "circle-stroke-color": "#6ab6ff", "circle-stroke-width": 1.9 } },
+      { id: "event-usgs-point-core", type: "circle", source: "event-points", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "source"], "usgs"], ["!", ["has", "point_count"]]], paint: { "circle-radius": 2.2, "circle-color": "#6ab6ff", "circle-stroke-color": "#09111b", "circle-stroke-width": 0.8 } },
       { id: "infrastructure-polygons", type: "fill", source: "infrastructure", filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": "#a986f5", "fill-opacity": 0.15 } },
       { id: "infrastructure-rail-lines", type: "line", source: "infrastructure", filter: ["all", ["==", ["geometry-type"], "LineString"], ["==", ["get", "assetType"], "rail_corridor"]], paint: { "line-color": "#6ab6ff", "line-width": 2.6, "line-opacity": 0.88, "line-dasharray": [1, 1.5] } },
       { id: "infrastructure-port-points", type: "circle", source: "infrastructure", filter: ["all", ["==", ["geometry-type"], "Point"], ["==", ["get", "assetType"], "port"]], paint: { "circle-radius": 6, "circle-color": "#f1ad38", "circle-stroke-color": "#15100a", "circle-stroke-width": 1.5 } },
@@ -201,6 +238,7 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
   const [showUsgs, setShowUsgs] = useState(true);
   const [showPorts, setShowPorts] = useState(true);
   const [showRail, setShowRail] = useState(true);
+  const [railCollapsed, setRailCollapsed] = useState(false);
   const [hiddenLayers, setHiddenLayers] = useState<Record<string, boolean>>({});
   const selectedLabel = selectedEvent?.title ?? selectedInfrastructure?.name ?? "none";
   eventsRef.current = events;
@@ -246,18 +284,25 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
           const classification = typeof feature.properties.classification === "string" ? feature.properties.classification : "REFERENCE";
           setMapTooltip({ title, source, classification, coordinates: pointCoordinatesLabel(feature.geometry), x: point.x, y: point.y });
         };
+        const activeSources = activeSourceKeys(layersRef.current);
+        const dynamicSources = Array.from(new Set([
+          ...eventsRef.current.map((event) => event.source_key).filter((source) => activeSources.has(source)),
+          ...activeSources,
+        ])).filter((source) => source !== "nws" && source !== "usgs");
         const featureLayerIds = [
           "event-polygons",
           "event-polygon-outline",
           "event-nws-points",
           "event-nws-point-halo",
+          "event-nws-point-core",
           "event-usgs-points",
           "event-usgs-point-halo",
+          "event-usgs-point-core",
           "infrastructure-polygons",
           "infrastructure-port-points",
           "infrastructure-rail-lines",
           "infrastructure-other-points",
-          ...layersRef.current.flatMap((item) => item.source_key && item.source_key !== "nws" && item.source_key !== "usgs" ? [`event-${item.source_key.replace(/[^a-z0-9_-]/gi, "-")}-polygons`, `event-${item.source_key.replace(/[^a-z0-9_-]/gi, "-")}-polygon-outline`, `event-${item.source_key.replace(/[^a-z0-9_-]/gi, "-")}-points`] : []),
+          ...dynamicSources.flatMap((source) => { const safeSource = source.replace(/[^a-z0-9_-]/gi, "-"); return [`event-${safeSource}-polygons`, `event-${safeSource}-polygon-outline`, `event-${safeSource}-point-halo`, `event-${safeSource}-point-ring`, `event-${safeSource}-points`, `event-${safeSource}-point-core`]; }),
         ];
         map.on("load", () => {
           if (!disposed && !basemapFailed) setMapRuntime("ready");
@@ -309,10 +354,11 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
 
   useEffect(() => {
     const source = mapRef.current?.getSource("events") as import("maplibre-gl").GeoJSONSource | undefined;
-    source?.setData(eventCollection(events) as never);
+    const mapEvents = visibleEvents(events, layers);
+    source?.setData(eventCollection(mapEvents) as never);
     const pointSource = mapRef.current?.getSource("event-points") as import("maplibre-gl").GeoJSONSource | undefined;
-    pointSource?.setData(eventPointCollection(events) as never);
-  }, [events]);
+    pointSource?.setData(eventPointCollection(mapEvents) as never);
+  }, [events, layers]);
 
   useEffect(() => {
     const source = mapRef.current?.getSource("infrastructure") as import("maplibre-gl").GeoJSONSource | undefined;
@@ -323,8 +369,8 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
     const map = mapRef.current;
     if (!map || mapRuntime !== "ready") return;
     const visibility = (visible: boolean) => visible ? "visible" : "none";
-    ["event-polygons", "event-polygon-outline", "event-nws-points", "event-nws-point-halo"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showNws)));
-    ["event-usgs-points", "event-usgs-point-halo"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showUsgs)));
+    ["event-polygons", "event-polygon-outline", "event-nws-points", "event-nws-point-halo", "event-nws-point-core"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showNws)));
+    ["event-usgs-points", "event-usgs-point-halo", "event-usgs-point-core"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showUsgs)));
     map.setLayoutProperty("event-clusters", "visibility", visibility(showNws && showUsgs && !Object.values(hiddenLayers).some(Boolean)));
     map.setLayoutProperty("infrastructure-polygons", "visibility", visibility(showPorts));
     map.setLayoutProperty("infrastructure-port-points", "visibility", visibility(showPorts));
@@ -335,15 +381,21 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
     const map = mapRef.current;
     if (!map || mapRuntime !== "ready") return;
     const visibility = (visible: boolean) => visible ? "visible" : "none";
-    layers.forEach((item) => {
+    layers.filter(isActiveEventLayer).forEach((item) => {
       if (!item.source_key || item.source_key === "nws" || item.source_key === "usgs") return;
       const source = item.source_key.replace(/[^a-z0-9_-]/gi, "-");
       const visible = !hiddenLayers[item.key];
-      [`event-${source}-polygons`, `event-${source}-polygon-outline`, `event-${source}-points`].forEach((layer) => {
+      [`event-${source}-polygons`, `event-${source}-polygon-outline`, `event-${source}-point-halo`, `event-${source}-point-ring`, `event-${source}-points`, `event-${source}-point-core`].forEach((layer) => {
         if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", visibility(visible));
       });
     });
   }, [hiddenLayers, layers, mapRuntime]);
+
+  const activeLayers = layers.filter((item) => {
+    if (!isActiveEventLayer(item)) return false;
+    return (item.counts.accepted ?? 0) > 0 || events.some((event) => event.source_key === item.source_key);
+  });
+  const activeSources = activeSourceKeys(layers);
 
   const handleMapKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     const selectable = [
@@ -367,7 +419,10 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
       {mapTooltip && <div className="map-feature-tooltip" style={{ left: mapTooltip.x, top: mapTooltip.y }} aria-live="polite"><strong>{mapTooltip.title}</strong><span>{mapTooltip.source} · {mapTooltip.classification}</span><small>{mapTooltip.coordinates}</small></div>}
       {mapRuntime === "ready" && <div className="maplibre-zoom-controls" aria-label="Map controls"><button type="button" onClick={() => mapRef.current?.zoomIn()} aria-label="Zoom in">+</button><button type="button" onClick={() => mapRef.current?.zoomOut()} aria-label="Zoom out">−</button><button type="button" onClick={() => mapRef.current?.flyTo({ center: INITIAL_CENTER, zoom: INITIAL_ZOOM })} aria-label="Reset map view">⌾</button></div>}
       <div className={`map-runtime-note map-runtime-note-${mapRuntime}`} role={mapRuntime === "error" ? "status" : undefined}><span className={`fallback-dot fallback-dot-${mapRuntime}`} /><span>{mapRuntime === "ready" ? "MAP RUNTIME / CARTO DARK OSM" : mapRuntime === "error" ? "BASEMAP UNAVAILABLE" : "MAP RUNTIME / LOADING CARTO"}</span><span className="fallback-detail">{mapRuntime === "ready" ? "OpenStreetMap tiles · source geometry preserved" : mapRuntime === "error" ? "The public tile service did not load; no geographic fallback is shown" : "Fetching public OpenStreetMap tiles"}</span></div>
-      <div className="map-layer-rail"><div className="rail-label">LIVE EVENT DATA</div><button className={`layer-control ${showNws ? "layer-active" : ""}`} type="button" onClick={() => setShowNws((value) => !value)} aria-pressed={showNws}><span className="layer-swatch layer-swatch-alert" /><span>NWS ALERTS</span><strong>{events.filter((event) => event.source_key === "nws").length.toString().padStart(2, "0")}</strong></button><button className={`layer-control ${showUsgs ? "layer-active" : ""}`} type="button" onClick={() => setShowUsgs((value) => !value)} aria-pressed={showUsgs}><span className="layer-swatch layer-swatch-quake" /><span>USGS QUAKES</span><strong>{events.filter((event) => event.source_key === "usgs").length.toString().padStart(2, "0")}</strong></button>{layers.filter((item) => item.source_key && item.source_key !== "nws" && item.source_key !== "usgs").map((item) => { const source = item.source_key as string; const hasData = events.some((event) => event.source_key === source); const canToggle = hasData && ["LIVE", "NEAR_REAL_TIME", "DEGRADED"].includes(item.status); const count = item.counts.accepted ?? events.filter((event) => event.source_key === source).length; return <button key={item.key} className={`layer-control ${!hiddenLayers[item.key] ? "layer-active" : ""}`} type="button" disabled={!canToggle} onClick={() => setHiddenLayers((current) => ({ ...current, [item.key]: !current[item.key] }))} aria-pressed={!hiddenLayers[item.key]}><span className="layer-swatch layer-swatch-future" /><span>{item.name.toUpperCase()}</span><strong>{canToggle ? count.toString().padStart(2, "0") : item.status}</strong></button>; })}<div className="rail-label rail-label-reference">INFRASTRUCTURE REFERENCE DATA</div><button className={`layer-control ${showPorts ? "layer-active" : ""}`} type="button" onClick={() => setShowPorts((value) => !value)} aria-pressed={showPorts}><span className="layer-swatch layer-swatch-port" /><span>PORT FACILITIES</span><strong>{infrastructure.filter((asset) => asset.type === "port").length.toString().padStart(2, "0")}</strong></button><button className={`layer-control ${showRail ? "layer-active" : ""}`} type="button" onClick={() => setShowRail((value) => !value)} aria-pressed={showRail}><span className="layer-swatch layer-swatch-rail" /><span>RAIL CORRIDORS</span><strong>{infrastructure.filter((asset) => asset.type === "rail_corridor").length.toString().padStart(2, "0")}</strong></button><button className="layer-control" type="button" disabled><span className="layer-swatch layer-swatch-future" /><span>POWER GRID / FUTURE</span><strong>—</strong></button></div>
+      <div className={`map-layer-rail ${railCollapsed ? "map-layer-rail-collapsed" : ""}`}>
+        <button className="layer-rail-toggle" type="button" onClick={() => setRailCollapsed((value) => !value)} aria-expanded={!railCollapsed} aria-label={railCollapsed ? "Expand live map layers" : "Collapse live map layers"}><ChevronIcon size={13} /><span>{railCollapsed ? "LAYERS" : "HIDE LAYERS"}</span></button>
+        {!railCollapsed && <div className="layer-rail-body"><div className="rail-label">LIVE EVENT DATA</div>{activeSources.has("nws") && <button className={`layer-control ${showNws ? "layer-active" : ""}`} type="button" onClick={() => setShowNws((value) => !value)} aria-pressed={showNws}><span className="layer-swatch layer-swatch-alert" /><span>NWS ALERTS</span><strong>{events.filter((event) => event.source_key === "nws").length.toString().padStart(2, "0")}</strong></button>}{activeSources.has("usgs") && <button className={`layer-control ${showUsgs ? "layer-active" : ""}`} type="button" onClick={() => setShowUsgs((value) => !value)} aria-pressed={showUsgs}><span className="layer-swatch layer-swatch-quake" /><span>USGS QUAKES</span><strong>{events.filter((event) => event.source_key === "usgs").length.toString().padStart(2, "0")}</strong></button>}{activeLayers.filter((item) => item.source_key !== "nws" && item.source_key !== "usgs").map((item) => { const source = item.source_key as string; const hasData = events.some((event) => event.source_key === source); const canToggle = hasData && ["LIVE", "NEAR_REAL_TIME", "DEGRADED"].includes(item.status); const count = item.counts.accepted ?? events.filter((event) => event.source_key === source).length; const pointStyle = SOURCE_POINT_STYLES[source]; return <button key={item.key} className={`layer-control ${!hiddenLayers[item.key] ? "layer-active" : ""}`} type="button" disabled={!canToggle} onClick={() => setHiddenLayers((current) => ({ ...current, [item.key]: !current[item.key] }))} aria-pressed={!hiddenLayers[item.key]}><span className="layer-swatch layer-swatch-source" style={{ background: pointStyle?.color ?? "#22c7a8" }} /><span>{item.name.toUpperCase()}</span><strong>{count.toString().padStart(2, "0")}</strong></button>; })}<div className="rail-label rail-label-reference">INFRASTRUCTURE REFERENCE DATA</div><button className={`layer-control ${showPorts ? "layer-active" : ""}`} type="button" onClick={() => setShowPorts((value) => !value)} aria-pressed={showPorts}><span className="layer-swatch layer-swatch-port" /><span>PORT FACILITIES</span><strong>{infrastructure.filter((asset) => asset.type === "port").length.toString().padStart(2, "0")}</strong></button><button className={`layer-control ${showRail ? "layer-active" : ""}`} type="button" onClick={() => setShowRail((value) => !value)} aria-pressed={showRail}><span className="layer-swatch layer-swatch-rail" /><span>RAIL CORRIDORS</span><strong>{infrastructure.filter((asset) => asset.type === "rail_corridor").length.toString().padStart(2, "0")}</strong></button></div>}
+      </div>
       <div className="map-legend"><span><span className="legend-dot legend-warning" /> WARNING</span><span><span className="legend-dot legend-advisory" /> ADVISORY</span><span><span className="legend-dot legend-info" /> INFO</span></div>
       <div className="map-scale"><span>0</span><span className="scale-line" /><span>500 km</span></div>
     </div>

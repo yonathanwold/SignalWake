@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import Select, func, select, text
@@ -140,6 +141,11 @@ def event_response(event: Event) -> EventResponse:
         provenance_data = json.loads(event.provenance_json or "[]")
     except json.JSONDecodeError:
         provenance_data = []
+    magnitude = None
+    if event.event_type == "earthquake" and event.summary:
+        match = re.search(r"Magnitude\s+(-?\d+(?:\.\d+)?)", event.summary, re.IGNORECASE)
+        if match:
+            magnitude = float(match.group(1))
     return EventResponse(
         id=event.id,
         source_id=event.source_id,
@@ -157,6 +163,7 @@ def event_response(event: Event) -> EventResponse:
         received_at=event.received_at,
         latitude=event.latitude,
         longitude=event.longitude,
+        magnitude=magnitude,
         geometry=geometry,
         classification=event.classification,
         provenance=[Provenance.model_validate(item) for item in provenance_data],
