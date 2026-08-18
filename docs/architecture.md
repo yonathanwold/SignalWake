@@ -258,3 +258,44 @@ bounded persisted relationship graph; they are not reliability, importance,
 impact, upstream/downstream, or disruption scores. API limits cap any response
 at 200 nodes and subgraphs default to depth 2 / 50 nodes; the browser uses a
 depth-2 / 30-node scope.
+
+## Phase 7 source provenance and lineage
+
+Phase 7 exposes a bounded chain-of-custody projection over the existing
+foreign keys, evidence JSON, and Phase 6 knowledge-time snapshots:
+
+```text
+Source -> RawObservation / RawInfrastructureRecord -> Event / Asset
+       -> InfrastructureRelationship -> InfrastructureAssessment
+       -> Scenario -> ScenarioRun -> ScenarioResult
+```
+
+`LineageRecord` is an optional explicit edge for processing paths that need a
+durable relationship beyond the current projections. Legacy rows are still
+traceable because the API deterministically synthesizes the same major edges
+from `raw_observation_id`, `raw_infrastructure_record_id`, relationship
+endpoints, assessment evidence, and scenario targets. This avoids fabricating
+backfill records. Each node reports direct versus derived status, source,
+observed/ingested/generated timestamps, evidence, confidence when present,
+and transformation/version metadata.
+
+`TransformationRun` records bounded operational runs for source ingest,
+infrastructure import, relationship derivation (`1.0.0`), assessment
+recompute (`phase4-v1`), and scenario execution (`second-order-v1`). Source
+responses retain optional latest-run ID, records retrieved/accepted/rejected,
+expected interval, freshness, and last error fields. Unknown values remain
+`null` and `UNKNOWN`; the system does not infer a schedule or health value.
+
+`GET /provenance/lineage` requires `object_type` and `object_id`, accepts
+`direction=upstream|downstream|both`, an inclusive `limit` of 1–200, and an
+optional UTC `at` knowledge-time boundary. It returns the focused node,
+bounded nodes/edges, transformation IDs, evidence, and a `truncated` flag.
+The `/provenance/{object_type}/{object_id}` aliases use the same contract.
+Historical event and assessment versions are additive nodes when an `at`
+boundary is supplied; current projections are never rewritten. Unknown
+objects return 404 and invalid bounds/directions return 422.
+
+The `/provenance` browser workspace is a focused flow rather than an admin
+table. Event, asset, graph relationship, assessment, and replay inspectors
+link to a concrete lineage focus. The workspace has no demo lineage fallback:
+an unavailable API or missing object is shown as an explicit empty/error state.

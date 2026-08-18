@@ -93,3 +93,38 @@ consequence, economic-loss, or causal labels. Scores therefore do not predict
 impact or service interruption, and Phase 4 does not include Scenario Lab.
 SQLite geometry helpers are deterministic fixture tooling; PostGIS and actual
 dataset coverage are deployment-dependent.
+
+## Phase 7 retrieval and provenance metadata
+
+Each NWS/USGS ingest pass creates one `TransformationRun` with adapter version,
+start/completion status, retrieved/accepted/rejected counts, and any error.
+Malformed features are counted as rejected while valid normalized events are
+counted as accepted. The corresponding `/sources` item exposes the latest run
+ID and counters alongside existing attempt/success/error/HTTP/freshness
+fields. `expected_update_interval_seconds` is nullable because no interval is
+asserted when one is not supplied by the source or deployment.
+
+Infrastructure imports create the same run record with importer version,
+records processed/skipped, and the existing import timestamp/error metadata.
+Graph derivation, assessment recomputation, and scenario execution also
+record their methodology/derivation versions and bounded counters. These are
+processing facts, not source claims.
+
+## Lineage contract
+
+`GET /provenance/lineage?object_type=...&object_id=...` answers where a claim
+came from with bounded one-hop edges. Supported focus types are `source`,
+`raw_observation`, `event`, `raw_infrastructure_record`, `asset`,
+`relationship`, `assessment`, `scenario`, and `scenario_run`; scenario result
+and historical version nodes can appear in returned graphs. Direct source and
+raw nodes are labeled `direct`; normalized, relationship, assessment, and
+scenario nodes are labeled `derived`. Evidence and transformation versions
+are surfaced on nodes/edges rather than inferred from labels.
+
+The API derives legacy links from stable IDs and evidence when no explicit
+`LineageRecord` exists: raw observation → event, raw infrastructure record →
+asset, asset → relationship, event/asset/relationship → assessment, and
+scenario → run/result. The optional `at=` boundary includes the latest
+knowledge-time event or assessment versions known by that time. Expired
+objects remain understandable through append-only version metadata; a
+missing current projection is not replaced with invented source data.
