@@ -81,6 +81,16 @@ export type HealthSource = {
   last_error: string | null;
 };
 
+export type HealthSummary = {
+  status: string;
+  database: string;
+  database_state: "connected" | "disconnected" | string;
+  overall_state: "ACTIVE" | "DEGRADED" | "DOWN" | "UNKNOWN" | string;
+  readiness: "ready" | "not_ready" | string;
+  generated_at: string;
+  source_counts: Record<string, number>;
+};
+
 export type HealthMetrics = {
   generated_at: string;
   process_local: {
