@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -8,12 +9,39 @@ from app.adapters.base import AdapterError
 from app.adapters.nws import NWSAdapter
 from app.adapters.usgs import USGSAdapter
 from app.config import Settings
+from app.history import record_source_state
 from app.ingest import ensure_source, ingest_once, persist_normalized
 from app.main import seed_demo_data
-from app.models import Event, RawObservation, Source
+from app.models import Event, RawObservation, Source, SourceStateVersion
 from app.repository import source_response
 
 FIXTURES = Path(__file__).parents[1] / "app" / "fixtures"
+
+
+@pytest.mark.asyncio
+async def test_ensure_source_refreshes_configured_metadata_without_rewriting_history(db_factory):
+    old_endpoint = "https://example.test/usgs-all-hour"
+    new_endpoint = "https://example.test/usgs-all-day"
+    first_adapter = USGSAdapter(old_endpoint, "signalwake-test", adapter_version="1.0.0")
+    updated_adapter = USGSAdapter(new_endpoint, "signalwake-test", adapter_version="2.0.0")
+
+    async with db_factory() as session:
+        source = await ensure_source(session, first_adapter)
+        await record_source_state(session, source, datetime(2026, 8, 17, tzinfo=timezone.utc))
+        await session.commit()
+        source_id = source.id
+
+        refreshed = await ensure_source(session, updated_adapter)
+        assert refreshed.id == source_id
+        assert refreshed.endpoint == new_endpoint
+        assert refreshed.name == updated_adapter.name
+        assert refreshed.kind == updated_adapter.key.upper()
+        assert refreshed.adapter_version == "2.0.0"
+        await session.commit()
+
+        history = list((await session.execute(select(SourceStateVersion))).scalars())
+        assert len(history) == 1
+        assert json.loads(history[0].snapshot_json)["endpoint"] == old_endpoint
 
 
 @pytest.mark.asyncio

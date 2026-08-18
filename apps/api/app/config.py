@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     use_demo_data: bool = True
     nws_alerts_url: str = "https://api.weather.gov/alerts/active?status=actual"
     usgs_earthquake_url: str = (
-        "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson"
+        "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
     )
     source_user_agent: str = "signalwake-portfolio/0.1 (contact@example.com)"
     request_timeout_seconds: float = 15.0

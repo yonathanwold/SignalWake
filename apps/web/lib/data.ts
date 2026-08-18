@@ -2,6 +2,7 @@ import type { CanonicalEvent, InfrastructureAsset, InfrastructureAssessment, Sou
 
 const portSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::port-facilities/about";
 const railSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::rail-lines/about";
+const usgsSourceUrl = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson";
 
 function demoInfrastructureProvenance(sourceRecordId: string, sourceUrl: string) {
   return [{ source_record_id: sourceRecordId, source_url: sourceUrl, source_name: "U.S. DOT representative fixture", attribution: "Representative fixture only; not the full live dataset", license: "See authoritative source page", fetched_at: "2026-08-17T14:31:05Z", raw_record_id: `demo-raw-${sourceRecordId.toLowerCase()}`, adapter_version: "1.0.0", payload_hash: `demo-hash-${sourceRecordId.toLowerCase()}` }];
@@ -53,7 +54,7 @@ export const demoEvents: CanonicalEvent[] = [
     longitude: -118.2437,
     geometry: { type: "Point", coordinates: [-118.2437, 34.0522, 11.2] },
     classification: "DEMO",
-    provenance: [{ source_record_id: "demo-usgs-001", source_url: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson", fetched_at: "2026-08-17T14:31:05Z", raw_observation_id: "demo-raw-usgs-001", adapter_version: "1.0.0", payload_hash: "demo-hash-usgs-001" }],
+    provenance: [{ source_record_id: "demo-usgs-001", source_url: usgsSourceUrl, fetched_at: "2026-08-17T14:31:05Z", raw_observation_id: "demo-raw-usgs-001", adapter_version: "1.0.0", payload_hash: "demo-hash-usgs-001" }],
   },
   {
     id: "demo-usgs-002",
@@ -74,20 +75,20 @@ export const demoEvents: CanonicalEvent[] = [
     longitude: -122.4194,
     geometry: { type: "Point", coordinates: [-122.4194, 37.7749, 7.4] },
     classification: "DEMO",
-    provenance: [{ source_record_id: "demo-usgs-002", source_url: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson", fetched_at: "2026-08-17T14:01:05Z", raw_observation_id: "demo-raw-usgs-002", adapter_version: "1.0.0", payload_hash: "demo-hash-usgs-002" }],
+    provenance: [{ source_record_id: "demo-usgs-002", source_url: usgsSourceUrl, fetched_at: "2026-08-17T14:01:05Z", raw_observation_id: "demo-raw-usgs-002", adapter_version: "1.0.0", payload_hash: "demo-hash-usgs-002" }],
   },
 ];
 
 export const demoSources: Source[] = [
   { id: "demo-source-nws", key: "nws", name: "National Weather Service", kind: "NWS", endpoint: "https://api.weather.gov/alerts/active?status=actual", active: true, adapter_version: "1.0.0", last_success_at: "2026-08-17T14:13:02Z", last_attempt_at: "2026-08-17T14:13:02Z", last_error: null, last_http_status: 200, freshness_seconds: 0, health: "HEALTHY" },
-  { id: "demo-source-usgs", key: "usgs", name: "United States Geological Survey", kind: "USGS", endpoint: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson", active: true, adapter_version: "1.0.0", last_success_at: "2026-08-17T14:31:05Z", last_attempt_at: "2026-08-17T14:31:05Z", last_error: null, last_http_status: 200, freshness_seconds: 0, health: "HEALTHY" },
+  { id: "demo-source-usgs", key: "usgs", name: "United States Geological Survey", kind: "USGS", endpoint: usgsSourceUrl, active: true, adapter_version: "1.0.0", last_success_at: "2026-08-17T14:31:05Z", last_attempt_at: "2026-08-17T14:31:05Z", last_error: null, last_http_status: 200, freshness_seconds: 0, health: "HEALTHY" },
 ];
 
 export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; infrastructure: InfrastructureAsset[]; assessments: InfrastructureAssessment[]; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
   try {
     const [eventsResponse, sourcesResponse, infrastructureResponse] = await Promise.all([
-      fetch(`${base}/events?limit=100`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
+      fetch(`${base}/events?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/sources`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/infrastructure?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
     ]);

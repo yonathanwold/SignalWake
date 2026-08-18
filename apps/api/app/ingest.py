@@ -60,6 +60,14 @@ async def ensure_source(session: AsyncSession, adapter: SourceAdapter) -> Source
         )
         session.add(source)
         await session.flush()
+    else:
+        # Keep the current source projection aligned with deploy-time adapter
+        # configuration. Append-only source history is written separately by
+        # record_source_state and is intentionally not rewritten here.
+        source.name = adapter.name
+        source.kind = adapter.key.upper()
+        source.endpoint = adapter.endpoint
+        source.adapter_version = adapter.adapter_version
     return source
 
 

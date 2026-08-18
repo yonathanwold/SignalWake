@@ -28,6 +28,12 @@ def test_cors_settings_reject_wildcard_with_credentials():
     assert settings.cors_origin_list == ["*"]
 
 
+def test_usgs_default_uses_past_day_feed(monkeypatch):
+    monkeypatch.delenv("USGS_EARTHQUAKE_URL", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.usgs_earthquake_url.endswith("/summary/all_day.geojson")
+
+
 def test_remote_url_rejects_private_and_unsafe_targets():
     for value in (
         "file:///etc/passwd",
