@@ -69,6 +69,24 @@ converted into live events.
   payload but are not treated as a fresh observation timestamp. Post,
   amendment, or fetch time supplies the current operational timestamp, and the
   provider polygon is preserved exactly.
+- **Road511 traffic events** — optional `GET /api/v1/events` with a real
+  `X-API-Key`, bounded USA bbox, required free-tier jurisdiction, and at most
+  500 rows. Provider point coordinates, event start/update/end timestamps, and
+  severity are normalized as `traffic_event`. Without `ROAD511_API_KEY`, no
+  request is made and the catalog remains `REQUIRES_CREDENTIALS`.
+- **Open-Meteo model fields** — one multi-coordinate CONUS request with a
+  capped 18-point grid, current variables, and at most 24 hours of past model
+  context. These features are `MODEL_FIELD` map points with model timestamps;
+  they are not persisted `/events` observations or predictions.
+- **RainViewer** — public weather-map metadata is exposed at
+  `/layers/rainviewer/metadata`, deriving one provider radar tile template and
+  frame timestamp. The map renders this as a translucent raster overlay, never
+  as synthetic markers; provider metadata failure returns `ERROR` and no tile.
+- **CMS NPPES** — keyless NPI Registry 2.1 query, bounded to one configured
+  state and 200 organizational providers. Only provider-supplied location
+  coordinates become reference points; missing coordinates are skipped.
+- **Census TIGERweb states** — keyless bounded GeoJSON state query, capped at
+  60 provider polygons. It is a static/reference boundary layer, not an event.
 
 ## Credentialed live adapters
 
@@ -83,7 +101,7 @@ converted into live events.
 
 NWS alerts, NWS station observations, USGS earthquakes, USGS water, NHC systems,
 NOAA CO-OPS, NASA EONET, AviationWeather.gov PIREPs, FEMA current designations,
-and configured FIRMS/AirNow adapters are persisted through
+and configured Road511/FIRMS/AirNow adapters are persisted through
 the same idempotent raw-observation/event path. Startup still performs one
 bounded pass; it is not a scheduler.
 
@@ -94,7 +112,8 @@ broader operational map. It includes NWS forecasts/observations/storm reports,
 NASA FIRMS, AirNow, NOAA CO-OPS, BTS/FRA, FAA, energy, dams, hospitals,
 shelters/public safety, MRMS, lightning, snow/temperature, drought/soil,
 land/elevation, watersheds/hydrography, Census, FEMA NRI, social
-vulnerability, and CDC wastewater. Every row states its geometry/data kind,
+vulnerability, CDC wastewater, Open-Meteo, RainViewer, NPPES, and Census.
+Every row states its geometry/data kind,
 source URL, temporal semantics, adapter version, refresh/counts, and one of
 `LIVE`, `NEAR_REAL_TIME`, `REFERENCE`, `REQUIRES_CREDENTIALS`,
 `NOT_CONNECTED`, `DEGRADED`, or `ERROR`.
@@ -103,12 +122,14 @@ source URL, temporal semantics, adapter version, refresh/counts, and one of
 GeoJSON-like source geometry, freshness/provenance, and the same 48-hour
 metadata. Credentialed, unconnected, and reference-only layers return an empty
 feature list with their status; SIGNALWAKE never emits placeholder dots or
-fake records. Large national datasets are represented as catalog/reference or
-tile metadata rather than downloaded into the browser.
+fake records. Open-Meteo, NPPES, and Census are fetched through bounded layer
+projections; RainViewer uses `/layers/rainviewer/metadata` for a provider tile
+template. Large national datasets are represented as catalog/reference or tile
+metadata rather than downloaded into the browser.
 
 ## Startup ingestion behavior
 
-When `INGEST_ON_STARTUP=true` (the default), the API runs one bounded fetch/normalize/persist pass for NWS alerts, NWS station observations, USGS earthquakes, bounded USGS water states, NHC, NOAA CO-OPS, NASA EONET, AviationWeather.gov PIREPs, and FEMA current designated counties. FIRMS and AirNow join the pass only when their real credentials are configured. Each source records `last_attempt_at`, `last_success_at`, `last_http_status`, `last_error`, and `freshness_seconds`. Valid features become `LIVE` canonical events with their raw payload and provenance; malformed features are logged and skipped while the remaining features continue.
+When `INGEST_ON_STARTUP=true` (the default), the API runs one bounded fetch/normalize/persist pass for NWS alerts, NWS station observations, USGS earthquakes, bounded USGS water states, NHC, NOAA CO-OPS, NASA EONET, AviationWeather.gov PIREPs, and FEMA current designated counties. Road511, FIRMS, and AirNow join the pass only when their real credentials are configured. Open-Meteo, RainViewer, NPPES, and Census remain request-scoped map layers because model/reference data must not enter the observed-event history. Each source records `last_attempt_at`, `last_success_at`, `last_http_status`, `last_error`, and `freshness_seconds`. Valid features become `LIVE` canonical events with their raw payload and provenance; malformed features are logged and skipped while the remaining features continue.
 
 The web map requests `/events?limit=2000`, matching the API's maximum event page size so the complete bounded source window can render without requesting unbounded history. Point features use a MapLibre cluster source at national zoom; the underlying source coordinates remain unchanged when a cluster expands.
 
@@ -117,11 +138,10 @@ The pass is idempotent by source-scoped record identity and payload hash. `USE_D
 ## Public API candidates deliberately not integrated
 
 The public-apis index was audited for useful geospatial feeds, but SIGNALWAKE
-does not bulk-import every listed service. Open-Meteo is forecast/grid data
-rather than observed point events; OpenSky is aircraft state rather than a
-hazard report; TransitLand is reference/transit network data; RainViewer is an
-aggregated radar tile service; and OpenAQ requires credentials and overlaps
-the AirNow air-quality role. These remain documented candidates until a
+does not bulk-import every listed service. OpenSky remains aircraft state
+rather than a hazard report, TransitLand requires a separate key and is better
+represented by vector tiles, and OpenAQ requires credentials and overlaps the
+AirNow air-quality role. These remain catalog/documentation candidates until a
 bounded contract, geometry semantics, freshness rule, and source-specific
 provenance path are justified.
 

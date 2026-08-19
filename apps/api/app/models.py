@@ -103,6 +103,7 @@ class EventType(str, enum.Enum):
     NATURAL_EVENT = "natural_event"
     AVIATION_REPORT = "aviation_report"
     FEMA_DESIGNATION = "fema_designation"
+    TRAFFIC_EVENT = "traffic_event"
 
 
 class Severity(str, enum.Enum):

@@ -87,6 +87,26 @@ export type LayerCatalogResponse = {
   items: LayerCatalogItem[];
 };
 
+export type MapLayerData = {
+  key: string;
+  status: string;
+  feature_count: number;
+  bounded_limit: number;
+  features: Array<{ type: "Feature"; id?: string; properties?: Record<string, unknown>; geometry?: { type: string; coordinates: unknown } }>;
+  provenance: Record<string, unknown>;
+  error: string | null;
+};
+
+export type RainViewerMetadata = {
+  key: "rainviewer";
+  status: string;
+  timestamp?: string;
+  tile_url_template: string | null;
+  attribution?: string;
+  source_url?: string;
+  error?: string;
+};
+
 export type HealthSource = {
   source_type: "event" | "infrastructure" | string;
   id: string;

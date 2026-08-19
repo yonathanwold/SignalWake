@@ -12,8 +12,15 @@ from app.adapters.coops import COOPSAdapter
 from app.adapters.eonet import EONETAdapter
 from app.adapters.fema import FEMADeclarationsAdapter
 from app.adapters.firms import FIRMSAdapter
+from app.adapters.layer_sources import (
+    CensusStatesAdapter,
+    NPPESAdapter,
+    OpenMeteoAdapter,
+    RainViewerAdapter,
+)
 from app.adapters.nws import NWSAdapter
 from app.adapters.nws_observations import NWSObservationsAdapter
+from app.adapters.road511 import Road511Adapter
 from app.adapters.usgs import USGSAdapter
 from app.adapters.usgs_water import USGSWaterAdapter
 from app.models import EventType
@@ -31,6 +38,64 @@ def test_extended_event_types_match_adapter_values():
     assert EventType.NATURAL_EVENT.value == "natural_event"
     assert EventType.AVIATION_REPORT.value == "aviation_report"
     assert EventType.FEMA_DESIGNATION.value == "fema_designation"
+    assert EventType.TRAFFIC_EVENT.value == "traffic_event"
+
+
+@pytest.mark.asyncio
+async def test_road511_requires_key_and_normalizes_bounded_event():
+    adapter = Road511Adapter("https://api.road511.com/api/v1/events", "signalwake-test", api_key="real-key", bbox="-130,20,-60,55", jurisdiction="WA", limit=2)
+    request_params: dict[str, str] = {}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        request_params.update({key: value for key, value in request.url.params.items()})
+        assert request.headers["X-API-Key"] == "real-key"
+        return httpx.Response(200, json={"data": [{"id": "WA-1", "title": "Closure", "severity": "major", "latitude": 46.4, "longitude": -123.8, "start_time": "2026-08-18T14:00:00Z"}]})
+
+    transport = httpx.MockTransport(respond)
+    async with httpx.AsyncClient(transport=transport) as client:
+        features = await adapter.fetch(client)
+    assert request_params["jurisdiction"] == "WA"
+    assert request_params["limit"] == "2"
+    assert features[0]["geometry"] == {"type": "Point", "coordinates": [-123.8, 46.4]}
+    assert adapter.normalize(features[0]).event_type == "traffic_event"
+    assert await Road511Adapter("https://example.test", "signalwake-test").fetch(client) == []
+
+
+@pytest.mark.asyncio
+async def test_open_meteo_model_field_and_reference_layers_preserve_geometry():
+    meteo = OpenMeteoAdapter("https://example.test/open-meteo", "signalwake-test", coordinates="35,-78;40,-75", limit=2)
+    nppes = NPPESAdapter("https://example.test/nppes", "signalwake-test", state="VA", limit=2)
+    census = CensusStatesAdapter("https://example.test/census", "signalwake-test", limit=2)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("open-meteo"):
+            return httpx.Response(200, json=[{"latitude": 35, "longitude": -78, "current": {"time": "2026-08-18T14:00", "temperature_2m": 27.0}}])
+        if request.url.path.endswith("nppes"):
+            return httpx.Response(200, json={"results": [{"number": "1234567890", "basic": {"organization_name": "Test Clinic"}, "addresses": [{"address_purpose": "LOCATION", "latitude": "38.85", "longitude": "-77.03", "state": "VA"}]}]})
+        return httpx.Response(200, json={"features": [{"type": "Feature", "id": "state-VA", "properties": {"NAME": "Virginia"}, "geometry": {"type": "Polygon", "coordinates": [[[1, 2], [3, 4], [1, 2]]]}}]})
+
+    transport = httpx.MockTransport(respond)
+    async with httpx.AsyncClient(transport=transport) as client:
+        model_features = await meteo.fetch(client)
+        provider_features = await nppes.fetch(client)
+        census_features = await census.fetch(client)
+    query = httpx.URL(meteo.request_endpoint()).params
+    assert len(query["latitude"].split(",")) == 2
+    assert query["past_hours"] == "6"
+    assert model_features[0]["properties"]["classification"] == "MODEL_FIELD"
+    assert model_features[0]["geometry"]["coordinates"] == [-78.0, 35.0]
+    assert provider_features[0]["geometry"]["coordinates"] == [-77.03, 38.85]
+    assert census_features[0]["geometry"]["type"] == "Polygon"
+
+
+@pytest.mark.asyncio
+async def test_rainviewer_metadata_builds_provider_tile_template():
+    adapter = RainViewerAdapter("https://example.test/rainviewer", "signalwake-test")
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"host": "https://tiles.example", "radar": {"past": [{"time": 1787050000, "path": "/v2/radar/1787050000"}]}}))
+    async with httpx.AsyncClient(transport=transport) as client:
+        metadata = await adapter.fetch_metadata(client)
+    assert metadata["tile_url_template"].startswith("https://tiles.example/v2/radar/")
+    assert "{z}/{x}/{y}" in metadata["tile_url_template"]
 
 
 @pytest.mark.asyncio

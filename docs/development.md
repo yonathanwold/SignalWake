@@ -80,7 +80,7 @@ an 800-edge response bound.
 
 Adapters send a descriptive user-agent, enforce a timeout, retry transient 429/5xx responses with bounded exponential backoff, and return structured errors for malformed JSON or missing fields. `ingest_once` runs one bounded pass over every adapter, records source attempt/success/error metadata, preserves each valid raw payload, and writes canonical `LIVE` events idempotently. Malformed features are logged and skipped without blocking the other source. Tests use checked-in JSON fixtures and monkeypatch the fetch boundary, so CI never calls NWS or USGS.
 
-The USGS adapter uses the authoritative rolling past-day GeoJSON summary feed. The API keeps operational event pages bounded at 2,000 records inside the past 48-hour UTC contract, and the web map requests that maximum so the live view is not truncated; it does not download unbounded history. Point observations are clustered at national zoom while retaining source coordinates.
+The USGS adapter uses the authoritative rolling past-day GeoJSON summary feed. The API keeps operational event pages bounded at 2,000 records inside the past 48-hour UTC contract, and the web map requests that maximum so the live view is not truncated; it does not download unbounded history. Point observations are clustered at national zoom while retaining source coordinates. Road511 is optional and never requests without `ROAD511_API_KEY`. Open-Meteo (capped multi-coordinate model fields), NPPES (one-state provider references), and Census TIGERweb (capped state polygons) are request-scoped layer adapters, not event ingestion. RainViewer has a separate metadata contract and raster source; no radar pixel is converted into a marker.
 
 ## Startup ingestion and fallback
 

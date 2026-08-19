@@ -44,6 +44,21 @@ class Settings(BaseSettings):
     aviation_weather_limit: int = 400
     fema_declarations_url: str = "https://gis.fema.gov/arcgis/rest/services/FEMA/DECS_ALL/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
     fema_declarations_limit: int = 2000
+    road511_url: str = "https://api.road511.com/api/v1/events"
+    road511_api_key: str | None = None
+    road511_bbox: str = "-130,20,-60,55"
+    road511_jurisdiction: str = "WA"
+    road511_limit: int = 200
+    open_meteo_url: str = "https://api.open-meteo.com/v1/forecast"
+    open_meteo_coordinates: str = "25,-125;25,-115;25,-105;25,-95;25,-85;25,-75;35,-125;35,-115;35,-105;35,-95;35,-85;35,-75;45,-125;45,-115;45,-105;45,-95;45,-85;45,-75"
+    open_meteo_past_hours: int = 6
+    open_meteo_limit: int = 108
+    rainviewer_url: str = "https://api.rainviewer.com/public/weather-maps.json"
+    nppes_url: str = "https://npiregistry.cms.hhs.gov/api/?version=2.1&state=VA&enumeration_type=NPI-2&address_purpose=LOCATION"
+    nppes_state: str = "VA"
+    nppes_limit: int = 200
+    census_states_url: str = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State/MapServer/0/query?where=1%3D1&outFields=NAME,GEOID&returnGeometry=true&outSR=4326&f=geojson"
+    census_states_limit: int = 60
     source_user_agent: str = "signalwake-portfolio/0.1 (contact@example.com)"
     request_timeout_seconds: float = 15.0
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -80,6 +95,16 @@ class Settings(BaseSettings):
             raise ValueError("AVIATION_WEATHER_LIMIT must be between 1 and 400")
         if self.fema_declarations_limit < 1 or self.fema_declarations_limit > 2000:
             raise ValueError("FEMA_DECLARATIONS_LIMIT must be between 1 and 2000")
+        if self.road511_limit < 1 or self.road511_limit > 500:
+            raise ValueError("ROAD511_LIMIT must be between 1 and 500")
+        if self.open_meteo_past_hours < 1 or self.open_meteo_past_hours > 24:
+            raise ValueError("OPEN_METEO_PAST_HOURS must be between 1 and 24")
+        if self.open_meteo_limit < 1 or self.open_meteo_limit > 200:
+            raise ValueError("OPEN_METEO_LIMIT must be between 1 and 200")
+        if self.nppes_limit < 1 or self.nppes_limit > 200:
+            raise ValueError("NPPES_LIMIT must be between 1 and 200")
+        if self.census_states_limit < 1 or self.census_states_limit > 60:
+            raise ValueError("CENSUS_STATES_LIMIT must be between 1 and 60")
         return self
 
 

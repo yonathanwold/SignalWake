@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app import main as main_module
 from app.adapters.nws import NWSAdapter
 from app.adapters.nws_observations import NWSObservationsAdapter
 from app.ingest import ensure_source, persist_normalized
@@ -57,11 +58,14 @@ async def test_catalog_and_unavailable_layer_never_emit_fake_records(db_factory)
         catalog = await client.get("/sources/catalog")
         assert catalog.status_code == 200
         rows = {item["key"]: item for item in catalog.json()["items"]}
-        assert {"nws_alerts", "usgs_earthquakes", "nasa_firms", "nasa_eonet", "aviation_weather", "fema_declarations", "cdc_wastewater"} <= rows.keys()
+        assert {"nws_alerts", "usgs_earthquakes", "nasa_firms", "nasa_eonet", "aviation_weather", "fema_declarations", "road511", "open_meteo", "rainviewer", "nppes", "census", "cdc_wastewater"} <= rows.keys()
         assert rows["nasa_firms"]["status"] == "REQUIRES_CREDENTIALS"
         assert rows["nasa_eonet"]["status"] == "NEAR_REAL_TIME"
         assert rows["aviation_weather"]["status"] == "NEAR_REAL_TIME"
         assert rows["fema_declarations"]["status"] == "NEAR_REAL_TIME"
+        assert rows["road511"]["status"] == "REQUIRES_CREDENTIALS"
+        assert rows["open_meteo"]["status"] == "MODEL_FIELD"
+        assert rows["nppes"]["status"] == "REFERENCE"
         unavailable = await client.get("/layers/nasa_firms/data")
         assert unavailable.status_code == 200
         assert unavailable.json()["feature_count"] == 0
@@ -70,6 +74,41 @@ async def test_catalog_and_unavailable_layer_never_emit_fake_records(db_factory)
             empty = await client.get(f"/layers/{key}/data")
             assert empty.status_code == 200
             assert empty.json()["features"] == []
+
+
+@pytest.mark.asyncio
+async def test_model_and_reference_layers_project_bounded_provider_features(db_factory, monkeypatch):
+    class FakeLayer:
+        endpoint = "https://example.test/layer"
+
+        async def fetch(self):
+            return [{"type": "Feature", "id": "provider-1", "properties": {"classification": "REFERENCE"}, "geometry": {"type": "Point", "coordinates": [-77.0, 38.8]}}]
+
+    monkeypatch.setattr(main_module, "layer_adapters", lambda settings: {"open_meteo": FakeLayer(), "nppes": FakeLayer(), "census": FakeLayer(), "rainviewer": FakeLayer()})
+    app.state.session_factory = db_factory
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/layers/nppes/data?limit=1")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["feature_count"] == 1
+    assert body["features"][0]["geometry"]["coordinates"] == [-77.0, 38.8]
+
+
+@pytest.mark.asyncio
+async def test_rainviewer_metadata_route_returns_provider_tile_contract(db_factory, monkeypatch):
+    class FakeRadar:
+        endpoint = "https://example.test/radar"
+
+        async def fetch_metadata(self):
+            return {"status": "LIVE", "timestamp": "2026-08-18T14:00:00Z", "tile_url_template": "https://tiles.test/{z}/{x}/{y}.png", "attribution": "RainViewer"}
+
+    monkeypatch.setattr(main_module, "layer_adapters", lambda settings: {"rainviewer": FakeRadar()})
+    response_transport = ASGITransport(app=app)
+    async with AsyncClient(transport=response_transport, base_url="http://test") as client:
+        response = await client.get("/layers/rainviewer/metadata")
+    assert response.status_code == 200
+    assert response.json()["tile_url_template"].startswith("https://tiles.test/")
 
 
 @pytest.mark.asyncio

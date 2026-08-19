@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { CanonicalEvent, InfrastructureAsset, LayerCatalogItem } from "../lib/types";
+import type { CanonicalEvent, InfrastructureAsset, LayerCatalogItem, MapLayerData, RainViewerMetadata } from "../lib/types";
 import { AlertIcon, ChevronIcon, MapIcon, QuakeIcon } from "./icons";
 import { SeverityDot } from "./status-pill";
 
@@ -9,6 +9,8 @@ type MapSurfaceProps = {
   events: CanonicalEvent[];
   infrastructure: InfrastructureAsset[];
   layers?: LayerCatalogItem[];
+  overlays?: Record<string, MapLayerData>;
+  radar?: RainViewerMetadata | null;
   windowLabel?: string;
   selectedEvent: CanonicalEvent | null;
   selectedInfrastructure: InfrastructureAsset | null;
@@ -26,7 +28,7 @@ const CARTO_DARK_TILES = [
   "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
 ];
 
-const ACTIVE_EVENT_LAYER_KEYS = new Set(["nws_alerts", "nws_observations", "usgs_earthquakes", "usgs_water", "nhc_systems", "noaa_coops", "nasa_firms", "airnow", "nasa_eonet", "aviation_weather", "fema_declarations"]);
+const ACTIVE_EVENT_LAYER_KEYS = new Set(["nws_alerts", "nws_observations", "usgs_earthquakes", "usgs_water", "nhc_systems", "noaa_coops", "nasa_firms", "airnow", "nasa_eonet", "aviation_weather", "fema_declarations", "road511"]);
 const ACTIVE_LAYER_STATUSES = new Set(["LIVE", "NEAR_REAL_TIME", "DEGRADED"]);
 const SOURCE_POINT_STYLES: Record<string, { color: string; halo: string; radius: number }> = {
   nws_observations: { color: "#6ab6ff", halo: "#6ab6ff", radius: 4 },
@@ -38,6 +40,7 @@ const SOURCE_POINT_STYLES: Record<string, { color: string; halo: string; radius:
   nasa_eonet: { color: "#bf84f3", halo: "#bf84f3", radius: 5 },
   aviation_weather: { color: "#f1ad38", halo: "#f1ad38", radius: 4 },
   fema_declarations: { color: "#ed6868", halo: "#ed6868", radius: 5 },
+  road511: { color: "#f59e0b", halo: "#f59e0b", radius: 5 },
 };
 
 function isActiveEventLayer(item: LayerCatalogItem) {
@@ -146,7 +149,24 @@ function infrastructureCollection(infrastructure: InfrastructureAsset[]): MapCol
   return { type: "FeatureCollection", features };
 }
 
-function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[], catalog: LayerCatalogItem[] = []) {
+function overlayCollection(overlays: Record<string, MapLayerData>, key: string): MapCollection {
+  const body = overlays[key];
+  if (!body) return { type: "FeatureCollection", features: [] };
+  return {
+    type: "FeatureCollection",
+    features: body.features.flatMap((feature) => {
+      if (!feature.geometry || typeof feature.geometry.type !== "string") return [];
+      return [{
+        type: "Feature" as const,
+        id: feature.id,
+        properties: { ...feature.properties, source: key, title: String(feature.properties?.name ?? feature.properties?.model ?? key), classification: feature.properties?.classification ?? (key === "open_meteo" ? "MODEL_FIELD" : "REFERENCE") },
+        geometry: feature.geometry,
+      }];
+    }),
+  };
+}
+
+function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[], catalog: LayerCatalogItem[] = [], overlays: Record<string, MapLayerData> = {}, radar: RainViewerMetadata | null = null) {
   const severityColor = ["match", ["get", "severity"], "critical", "#ef4444", "warning", "#ed6868", "advisory", "#f1ad38", "watch", "#f1ad38", "#22c7a8"];
   const polygonGeometry = ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false];
   const earthquakeRadius = ["interpolate", ["linear"], ["coalesce", ["get", "magnitude"], 0], 0, 4, 4, 6, 5, 9, 6, 13];
@@ -167,22 +187,38 @@ function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[
       { id: `event-${safeSource}-point-core`, type: "circle", source: "event-points", filter: [...filter, ["==", ["geometry-type"], "Point"], ["!", ["has", "point_count"]]], paint: { "circle-radius": Math.max(1.6, pointStyle.radius * 0.34), "circle-color": pointStyle.color, "circle-stroke-color": "#09111b", "circle-stroke-width": 0.8 } },
     ];
   });
+  const sources: Record<string, unknown> = {
+    [BASEMAP_SOURCE_ID]: {
+      type: "raster",
+      tiles: CARTO_DARK_TILES,
+      tileSize: 256,
+      attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a> <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">© CARTO</a>',
+    },
+    events: { type: "geojson", data: eventCollection(mapEvents) },
+    "event-points": { type: "geojson", data: eventPointCollection(mapEvents), cluster: true, clusterRadius: 42, clusterMaxZoom: 5 },
+    infrastructure: { type: "geojson", data: infrastructureCollection(infrastructure) },
+    "open-meteo": { type: "geojson", data: overlayCollection(overlays, "open_meteo") },
+    nppes: { type: "geojson", data: overlayCollection(overlays, "nppes") },
+    census: { type: "geojson", data: overlayCollection(overlays, "census") },
+  };
+  const overlayLayers: unknown[] = [
+    { id: "census-state-fill", type: "fill", source: "census", filter: ["in", ["geometry-type"], "Polygon", "MultiPolygon"], paint: { "fill-color": "#8b5cf6", "fill-opacity": 0.035 } },
+    { id: "census-state-outline", type: "line", source: "census", filter: ["in", ["geometry-type"], "Polygon", "MultiPolygon"], paint: { "line-color": "#8b5cf6", "line-width": 0.8, "line-opacity": 0.38 } },
+    { id: "open-meteo-field-halo", type: "circle", source: "open-meteo", paint: { "circle-radius": 18, "circle-color": "#38bdf8", "circle-opacity": 0.12, "circle-stroke-color": "#38bdf8", "circle-stroke-width": 1 } },
+    { id: "open-meteo-field-core", type: "circle", source: "open-meteo", paint: { "circle-radius": 6, "circle-color": "#38bdf8", "circle-opacity": 0.42, "circle-stroke-color": "#bae6fd", "circle-stroke-width": 1 } },
+    { id: "nppes-provider-ring", type: "circle", source: "nppes", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 5, "circle-color": "#09111b", "circle-stroke-color": "#a986f5", "circle-stroke-width": 1.4, "circle-opacity": 0.94 } },
+  ];
+  if (radar?.tile_url_template) {
+    sources.rainviewer = { type: "raster", tiles: [radar.tile_url_template], tileSize: 256, attribution: radar.attribution ?? "RainViewer" };
+    overlayLayers.unshift({ id: "rainviewer-radar", type: "raster", source: "rainviewer", paint: { "raster-opacity": 0.38, "raster-fade-duration": 0 } });
+  }
   return {
     version: 8,
-    sources: {
-      [BASEMAP_SOURCE_ID]: {
-        type: "raster",
-        tiles: CARTO_DARK_TILES,
-        tileSize: 256,
-        attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a> <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">© CARTO</a>',
-      },
-      events: { type: "geojson", data: eventCollection(mapEvents) },
-      "event-points": { type: "geojson", data: eventPointCollection(mapEvents), cluster: true, clusterRadius: 42, clusterMaxZoom: 5 },
-      infrastructure: { type: "geojson", data: infrastructureCollection(infrastructure) },
-    },
+    sources,
     layers: [
       { id: "background", type: "background", paint: { "background-color": "#09111b" } },
       { id: "basemap", type: "raster", source: BASEMAP_SOURCE_ID, paint: { "raster-opacity": 1 } },
+      ...overlayLayers,
       { id: "event-polygons", type: "fill", source: "events", filter: ["all", ["==", ["get", "source"], "nws"], polygonGeometry], paint: { "fill-color": severityColor, "fill-opacity": 0.2 } },
       { id: "event-polygon-outline", type: "line", source: "events", filter: ["all", ["==", ["get", "source"], "nws"], polygonGeometry], paint: { "line-color": severityColor, "line-width": 2, "line-opacity": 0.95 } },
       { id: "event-clusters", type: "circle", source: "event-points", filter: ["has", "point_count"], paint: { "circle-radius": ["step", ["get", "point_count"], 14, 25, 18, 100, 23], "circle-color": "#09111b", "circle-stroke-color": "#22c7a8", "circle-stroke-width": ["step", ["get", "point_count"], 2, 25, 2.5, 100, 3.2], "circle-stroke-opacity": 0.96, "circle-opacity": 0.98 } },
@@ -225,12 +261,14 @@ function centerLabel(view: MapViewState) {
   return `${Math.abs(view.latitude).toFixed(5)}°${latitudeHemisphere} / ${Math.abs(view.longitude).toFixed(5)}°${longitudeHemisphere}`;
 }
 
-export function MapSurface({ events, infrastructure, layers = [], windowLabel = "PAST 48H / UTC", selectedEvent, selectedInfrastructure, onSelectEvent, onSelectInfrastructure }: MapSurfaceProps) {
+export function MapSurface({ events, infrastructure, layers = [], overlays = {}, radar = null, windowLabel = "PAST 48H / UTC", selectedEvent, selectedInfrastructure, onSelectEvent, onSelectInfrastructure }: MapSurfaceProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
   const eventsRef = useRef(events);
   const infrastructureRef = useRef(infrastructure);
   const layersRef = useRef(layers);
+  const overlaysRef = useRef(overlays);
+  const radarRef = useRef(radar);
   const onSelectEventRef = useRef(onSelectEvent);
   const onSelectInfrastructureRef = useRef(onSelectInfrastructure);
   const [mapRuntime, setMapRuntime] = useState<"loading" | "ready" | "error">("loading");
@@ -247,6 +285,8 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
   eventsRef.current = events;
   infrastructureRef.current = infrastructure;
   layersRef.current = layers;
+  overlaysRef.current = overlays;
+  radarRef.current = radar;
   onSelectEventRef.current = onSelectEvent;
   onSelectInfrastructureRef.current = onSelectInfrastructure;
 
@@ -259,7 +299,7 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
         maplibre.setWorkerUrl("/maplibre-gl-worker.mjs");
         const map = new maplibre.Map({
           container: mapContainerRef.current,
-          style: mapStyle(eventsRef.current, infrastructureRef.current, layersRef.current) as never,
+          style: mapStyle(eventsRef.current, infrastructureRef.current, layersRef.current, overlaysRef.current, radarRef.current) as never,
           center: INITIAL_CENTER,
           zoom: INITIAL_ZOOM,
           minZoom: 2,
@@ -305,6 +345,11 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
           "infrastructure-port-points",
           "infrastructure-rail-lines",
           "infrastructure-other-points",
+          "open-meteo-field-halo",
+          "open-meteo-field-core",
+          "nppes-provider-ring",
+          "census-state-fill",
+          "census-state-outline",
           ...dynamicSources.flatMap((source) => { const safeSource = source.replace(/[^a-z0-9_-]/gi, "-"); return [`event-${safeSource}-polygons`, `event-${safeSource}-polygon-outline`, `event-${safeSource}-point-halo`, `event-${safeSource}-point-ring`, `event-${safeSource}-points`, `event-${safeSource}-point-core`]; }),
         ];
         map.on("load", () => {
@@ -371,6 +416,19 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || mapRuntime !== "ready") return;
+    for (const key of ["open_meteo", "nppes", "census"]) {
+      const source = map.getSource(key === "open_meteo" ? "open-meteo" : key) as import("maplibre-gl").GeoJSONSource | undefined;
+      source?.setData(overlayCollection(overlays, key) as never);
+    }
+    if (radar?.tile_url_template && !map.getSource("rainviewer")) {
+      map.addSource("rainviewer", { type: "raster", tiles: [radar.tile_url_template], tileSize: 256, attribution: radar.attribution ?? "RainViewer" });
+      map.addLayer({ id: "rainviewer-radar", type: "raster", source: "rainviewer", paint: { "raster-opacity": 0.38, "raster-fade-duration": 0 } });
+    }
+  }, [mapRuntime, overlays, radar]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || mapRuntime !== "ready") return;
     const visibility = (visible: boolean) => visible ? "visible" : "none";
     ["event-polygons", "event-polygon-outline", "event-nws-points", "event-nws-point-halo", "event-nws-point-core"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showNws)));
     ["event-usgs-points", "event-usgs-point-halo", "event-usgs-point-core"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showUsgs)));
@@ -378,7 +436,15 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
     map.setLayoutProperty("infrastructure-polygons", "visibility", visibility(showPorts));
     map.setLayoutProperty("infrastructure-port-points", "visibility", visibility(showPorts));
     ["infrastructure-rail-lines", "infrastructure-other-points"].forEach((layer) => map.setLayoutProperty(layer, "visibility", visibility(showRail)));
-  }, [hiddenLayers, mapRuntime, showNws, showUsgs, showPorts, showRail]);
+    const showModel = !hiddenLayers.open_meteo;
+    const showProviders = !hiddenLayers.nppes;
+    const showCensus = !hiddenLayers.census;
+    const showRadar = !hiddenLayers.rainviewer;
+    ["open-meteo-field-halo", "open-meteo-field-core"].forEach((layer) => { if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", visibility(showModel)); });
+    if (map.getLayer("nppes-provider-ring")) map.setLayoutProperty("nppes-provider-ring", "visibility", visibility(showProviders));
+    ["census-state-fill", "census-state-outline"].forEach((layer) => { if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", visibility(showCensus)); });
+    if (map.getLayer("rainviewer-radar")) map.setLayoutProperty("rainviewer-radar", "visibility", visibility(showRadar));
+  }, [hiddenLayers, mapRuntime, showNws, showUsgs, showPorts, showRail, overlays, radar]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -399,6 +465,7 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
     return (item.counts.accepted ?? 0) > 0 || events.some((event) => event.source_key === item.source_key);
   });
   const activeSources = activeSourceKeys(layers);
+  const overlayCounts = { open_meteo: overlays.open_meteo?.feature_count ?? 0, nppes: overlays.nppes?.feature_count ?? 0, census: overlays.census?.feature_count ?? 0 };
 
   const handleMapKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     const selectable = [
@@ -424,9 +491,9 @@ export function MapSurface({ events, infrastructure, layers = [], windowLabel = 
       <div className={`map-runtime-note map-runtime-note-${mapRuntime}`} role={mapRuntime === "error" ? "status" : undefined}><span className={`fallback-dot fallback-dot-${mapRuntime}`} /><span>{mapRuntime === "ready" ? "MAP RUNTIME / CARTO DARK OSM" : mapRuntime === "error" ? "BASEMAP UNAVAILABLE" : "MAP RUNTIME / LOADING CARTO"}</span><span className="fallback-detail">{mapRuntime === "ready" ? "OpenStreetMap tiles · source geometry preserved" : mapRuntime === "error" ? "The public tile service did not load; no geographic fallback is shown" : "Fetching public OpenStreetMap tiles"}</span></div>
       <div className={`map-layer-rail ${railCollapsed ? "map-layer-rail-collapsed" : ""}`}>
         <button className="layer-rail-toggle" type="button" onClick={() => setRailCollapsed((value) => !value)} aria-expanded={!railCollapsed} aria-label={railCollapsed ? "Expand live map layers" : "Collapse live map layers"}><ChevronIcon size={13} /><span>{railCollapsed ? "LAYERS" : "HIDE LAYERS"}</span></button>
-        {!railCollapsed && <div className="layer-rail-body"><div className="rail-label">LIVE EVENT DATA</div>{activeSources.has("nws") && <button className={`layer-control ${showNws ? "layer-active" : ""}`} type="button" onClick={() => setShowNws((value) => !value)} aria-pressed={showNws}><span className="layer-swatch layer-swatch-alert" /><span>NWS ALERTS</span><strong>{events.filter((event) => event.source_key === "nws").length.toString().padStart(2, "0")}</strong></button>}{activeSources.has("usgs") && <button className={`layer-control ${showUsgs ? "layer-active" : ""}`} type="button" onClick={() => setShowUsgs((value) => !value)} aria-pressed={showUsgs}><span className="layer-swatch layer-swatch-quake" /><span>USGS QUAKES</span><strong>{events.filter((event) => event.source_key === "usgs").length.toString().padStart(2, "0")}</strong></button>}{activeLayers.filter((item) => item.source_key !== "nws" && item.source_key !== "usgs").map((item) => { const source = item.source_key as string; const hasData = events.some((event) => event.source_key === source); const canToggle = hasData && ["LIVE", "NEAR_REAL_TIME", "DEGRADED"].includes(item.status); const count = item.counts.accepted ?? events.filter((event) => event.source_key === source).length; const pointStyle = SOURCE_POINT_STYLES[source]; return <button key={item.key} className={`layer-control ${!hiddenLayers[item.key] ? "layer-active" : ""}`} type="button" disabled={!canToggle} onClick={() => setHiddenLayers((current) => ({ ...current, [item.key]: !current[item.key] }))} aria-pressed={!hiddenLayers[item.key]}><span className="layer-swatch layer-swatch-source" style={{ background: pointStyle?.color ?? "#22c7a8" }} /><span>{item.name.toUpperCase()}</span><strong>{count.toString().padStart(2, "0")}</strong></button>; })}<div className="rail-label rail-label-reference">INFRASTRUCTURE REFERENCE DATA</div><button className={`layer-control ${showPorts ? "layer-active" : ""}`} type="button" onClick={() => setShowPorts((value) => !value)} aria-pressed={showPorts}><span className="layer-swatch layer-swatch-port" /><span>PORT FACILITIES</span><strong>{infrastructure.filter((asset) => asset.type === "port").length.toString().padStart(2, "0")}</strong></button><button className={`layer-control ${showRail ? "layer-active" : ""}`} type="button" onClick={() => setShowRail((value) => !value)} aria-pressed={showRail}><span className="layer-swatch layer-swatch-rail" /><span>RAIL CORRIDORS</span><strong>{infrastructure.filter((asset) => asset.type === "rail_corridor").length.toString().padStart(2, "0")}</strong></button></div>}
+        {!railCollapsed && <div className="layer-rail-body"><div className="rail-label">LIVE EVENT DATA</div>{activeSources.has("nws") && <button className={`layer-control ${showNws ? "layer-active" : ""}`} type="button" onClick={() => setShowNws((value) => !value)} aria-pressed={showNws}><span className="layer-swatch layer-swatch-alert" /><span>NWS ALERTS</span><strong>{events.filter((event) => event.source_key === "nws").length.toString().padStart(2, "0")}</strong></button>}{activeSources.has("usgs") && <button className={`layer-control ${showUsgs ? "layer-active" : ""}`} type="button" onClick={() => setShowUsgs((value) => !value)} aria-pressed={showUsgs}><span className="layer-swatch layer-swatch-quake" /><span>USGS QUAKES</span><strong>{events.filter((event) => event.source_key === "usgs").length.toString().padStart(2, "0")}</strong></button>}{activeLayers.filter((item) => item.source_key !== "nws" && item.source_key !== "usgs").map((item) => { const source = item.source_key as string; const hasData = events.some((event) => event.source_key === source); const canToggle = hasData && ["LIVE", "NEAR_REAL_TIME", "DEGRADED"].includes(item.status); const count = item.counts.accepted ?? events.filter((event) => event.source_key === source).length; const pointStyle = SOURCE_POINT_STYLES[source]; return <button key={item.key} className={`layer-control ${!hiddenLayers[item.key] ? "layer-active" : ""}`} type="button" disabled={!canToggle} onClick={() => setHiddenLayers((current) => ({ ...current, [item.key]: !current[item.key] }))} aria-pressed={!hiddenLayers[item.key]}><span className="layer-swatch layer-swatch-source" style={{ background: pointStyle?.color ?? "#22c7a8" }} /><span>{item.name.toUpperCase()}</span><strong>{count.toString().padStart(2, "0")}</strong></button>; })}<div className="rail-label">MODEL AND REFERENCE OVERLAYS</div>{overlayCounts.open_meteo > 0 && <button className={`layer-control ${!hiddenLayers.open_meteo ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, open_meteo: !current.open_meteo }))} aria-pressed={!hiddenLayers.open_meteo}><span className="layer-swatch" style={{ background: "#38bdf8" }} /><span>OPEN-METEO MODEL</span><strong>{overlayCounts.open_meteo.toString().padStart(2, "0")}</strong></button>}{overlayCounts.nppes > 0 && <button className={`layer-control ${!hiddenLayers.nppes ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, nppes: !current.nppes }))} aria-pressed={!hiddenLayers.nppes}><span className="layer-swatch" style={{ background: "#a986f5" }} /><span>NPPES PROVIDERS</span><strong>{overlayCounts.nppes.toString().padStart(2, "0")}</strong></button>}{overlayCounts.census > 0 && <button className={`layer-control ${!hiddenLayers.census ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, census: !current.census }))} aria-pressed={!hiddenLayers.census}><span className="layer-swatch" style={{ background: "#8b5cf6" }} /><span>CENSUS STATES</span><strong>{overlayCounts.census.toString().padStart(2, "0")}</strong></button>}{radar?.tile_url_template && <button className={`layer-control ${!hiddenLayers.rainviewer ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, rainviewer: !current.rainviewer }))} aria-pressed={!hiddenLayers.rainviewer}><span className="layer-swatch" style={{ background: "#22c7a8" }} /><span>RAINVIEWER RADAR</span><strong>RADAR</strong></button>}<div className="rail-label rail-label-reference">INFRASTRUCTURE REFERENCE DATA</div><button className={`layer-control ${showPorts ? "layer-active" : ""}`} type="button" onClick={() => setShowPorts((value) => !value)} aria-pressed={showPorts}><span className="layer-swatch layer-swatch-port" /><span>PORT FACILITIES</span><strong>{infrastructure.filter((asset) => asset.type === "port").length.toString().padStart(2, "0")}</strong></button><button className={`layer-control ${showRail ? "layer-active" : ""}`} type="button" onClick={() => setShowRail((value) => !value)} aria-pressed={showRail}><span className="layer-swatch layer-swatch-rail" /><span>RAIL CORRIDORS</span><strong>{infrastructure.filter((asset) => asset.type === "rail_corridor").length.toString().padStart(2, "0")}</strong></button></div>}
       </div>
-      <div className="map-legend"><span><span className="legend-dot legend-warning" /> WARNING</span><span><span className="legend-dot legend-advisory" /> ADVISORY</span><span><span className="legend-dot legend-info" /> INFO</span>{activeLayers.filter((item) => item.source_key && item.source_key !== "nws" && item.source_key !== "usgs").slice(0, 4).map((item) => { const style = SOURCE_POINT_STYLES[item.source_key as string]; return <span key={item.key}><span className="legend-ring" style={{ borderColor: style?.color ?? "#22c7a8" }} /> {item.name.toUpperCase()}</span>; })}</div>
+      <div className="map-legend"><span><span className="legend-dot legend-warning" /> WARNING</span><span><span className="legend-dot legend-advisory" /> ADVISORY</span><span><span className="legend-dot legend-info" /> INFO</span>{activeLayers.filter((item) => item.source_key && item.source_key !== "nws" && item.source_key !== "usgs").slice(0, 4).map((item) => { const style = SOURCE_POINT_STYLES[item.source_key as string]; return <span key={item.key}><span className="legend-ring" style={{ borderColor: style?.color ?? "#22c7a8" }} /> {item.name.toUpperCase()}</span>; })}{overlayCounts.open_meteo > 0 && <span><span className="legend-ring" style={{ borderColor: "#38bdf8" }} /> MODEL FIELD</span>}{radar?.tile_url_template && <span><span className="legend-ring" style={{ borderColor: "#22c7a8" }} /> RADAR · {radar.timestamp?.slice(11, 16) ?? "LIVE"}Z</span>}</div>
       <div className="map-scale"><span>0</span><span className="scale-line" /><span>500 km</span></div>
     </div>
     <div className="map-foot"><span><span className="foot-icon"><AlertIcon size={14} /></span> WEATHER OVERLAYS</span><span><span className="foot-icon"><QuakeIcon size={14} /></span> SEISMIC OBSERVATIONS</span><span className="map-foot-note"><SeverityDot severity="info" /> Reference assets are source-provided · no impact assessment is implied</span></div>

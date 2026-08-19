@@ -17,13 +17,21 @@ from sqlalchemy.orm import selectinload
 
 from app.adapters.airnow import AirNowAdapter
 from app.adapters.aviation_weather import AviationWeatherAdapter
+from app.adapters.base import AdapterError
 from app.adapters.coops import COOPSAdapter
 from app.adapters.eonet import EONETAdapter
 from app.adapters.fema import FEMADeclarationsAdapter
 from app.adapters.firms import FIRMSAdapter
+from app.adapters.layer_sources import (
+    CensusStatesAdapter,
+    NPPESAdapter,
+    OpenMeteoAdapter,
+    RainViewerAdapter,
+)
 from app.adapters.nhc import NHCAdapter
 from app.adapters.nws import NWSAdapter
 from app.adapters.nws_observations import NWSObservationsAdapter
+from app.adapters.road511 import Road511Adapter
 from app.adapters.usgs import USGSAdapter
 from app.adapters.usgs_water import USGSWaterAdapter
 from app.assessments import (
@@ -196,6 +204,19 @@ def adapters(settings: Settings):
             limit=settings.fema_declarations_limit,
         ),
     ]
+    if settings.road511_api_key:
+        configured.append(
+            Road511Adapter(
+                settings.road511_url,
+                settings.source_user_agent,
+                settings.request_timeout_seconds,
+                settings.adapter_version,
+                api_key=settings.road511_api_key,
+                bbox=settings.road511_bbox,
+                jurisdiction=settings.road511_jurisdiction,
+                limit=settings.road511_limit,
+            )
+        )
     if settings.firms_map_key:
         configured.append(
             FIRMSAdapter(
@@ -222,6 +243,33 @@ def adapters(settings: Settings):
             )
         )
     return configured
+
+
+def layer_adapters(settings: Settings) -> dict[str, object]:
+    return {
+        "open_meteo": OpenMeteoAdapter(
+            settings.open_meteo_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            coordinates=settings.open_meteo_coordinates,
+            past_hours=settings.open_meteo_past_hours,
+            limit=settings.open_meteo_limit,
+        ),
+        "rainviewer": RainViewerAdapter(settings.rainviewer_url, settings.source_user_agent, settings.request_timeout_seconds),
+        "nppes": NPPESAdapter(
+            settings.nppes_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            state=settings.nppes_state,
+            limit=settings.nppes_limit,
+        ),
+        "census": CensusStatesAdapter(
+            settings.census_states_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            limit=settings.census_states_limit,
+        ),
+    }
 
 
 async def seed_demo_data(
@@ -300,7 +348,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SIGNALWAKE API",
     version="0.1.0",
-    description="Authoritative NWS alerts and station observations, USGS earthquake and water observations, NHC systems, NOAA CO-OPS water levels, NASA EONET natural events, AviationWeather.gov PIREPs, current FEMA designated counties, NASA FIRMS fires, and AirNow air quality normalized into canonical operational events.",
+    description="Authoritative NWS, USGS, NHC, CO-OPS, EONET, AviationWeather.gov, FEMA, optional Road511 traffic events, plus separate Open-Meteo model, RainViewer radar, NPPES, and Census map layers. Observed events remain bounded to the past 48 hours.",
     lifespan=lifespan,
 )
 app.state.startup_ready = True
@@ -675,6 +723,20 @@ async def layer_catalog(session: AsyncSession = Depends(session_dependency)) -> 
     )
 
 
+@app.get("/layers/{layer_key}/metadata", tags=["layers"])
+async def layer_metadata(layer_key: str) -> dict[str, object]:
+    """Return provider metadata for non-event map overlays such as radar."""
+
+    if layer_key != "rainviewer":
+        raise HTTPException(status_code=404, detail="Layer has no metadata overlay contract")
+    adapter = layer_adapters(get_settings())[layer_key]
+    try:
+        metadata = await adapter.fetch_metadata()  # type: ignore[attr-defined]
+        return {"key": layer_key, **metadata}
+    except AdapterError as exc:
+        return {"key": layer_key, "status": "ERROR", "tile_url_template": None, "source_url": adapter.endpoint, "error": str(exc)}
+
+
 def _event_layer_feature(item: EventResponse) -> dict[str, object] | None:
     geometry = item.geometry
     if geometry is None and item.latitude is not None and item.longitude is not None:
@@ -714,6 +776,7 @@ async def layer_data(
     window = resolve_live_window(now=generated_at)
     item = next(row for row in await catalog_items(session, window, generated_at=generated_at) if row.key == layer_key)
     features: list[dict[str, object]] = []
+    overlay_provenance: dict[str, object] = {}
     if spec.source_key:
         if layer_key in {
             "nws_alerts",
@@ -727,6 +790,7 @@ async def layer_data(
             "nasa_eonet",
             "aviation_weather",
             "fema_declarations",
+            "road511",
         }:
             rows, _, _ = await list_events(
                 session,
@@ -735,6 +799,15 @@ async def layer_data(
                 limit=limit,
             )
             features = [feature for row in rows if (feature := _event_layer_feature(row)) is not None]
+        elif layer_key in {"open_meteo", "nppes", "census"}:
+            adapter = layer_adapters(get_settings())[layer_key]
+            try:
+                features = (await adapter.fetch())[:limit]  # type: ignore[attr-defined]
+                overlay_provenance = {"endpoint": adapter.endpoint, "adapter": adapter.__class__.__name__, "classification": "MODEL_FIELD" if layer_key == "open_meteo" else "REFERENCE"}
+            except AdapterError as exc:
+                overlay_provenance = {"endpoint": adapter.endpoint, "error": str(exc)}
+                item.status = "ERROR"
+                item.error = str(exc)
         elif layer_key in {"bts", "fra"}:
             rows, _, _ = await list_infrastructure(session, source=spec.source_key, limit=limit, cursor=0)
             features = [
@@ -764,7 +837,7 @@ async def layer_data(
         feature_count=len(features),
         bounded_limit=limit,
         features=features,
-        provenance={**item.provenance, "source_url": item.endpoint, "adapter_version": item.adapter_version},
+        provenance={**item.provenance, "source_url": item.endpoint, "adapter_version": item.adapter_version, **overlay_provenance},
         error=item.error,
     )
 

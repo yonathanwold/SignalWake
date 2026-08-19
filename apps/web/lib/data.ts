@@ -1,4 +1,4 @@
-import type { CanonicalEvent, InfrastructureAsset, InfrastructureAssessment, LayerCatalogItem, Source } from "./types";
+import type { CanonicalEvent, InfrastructureAsset, InfrastructureAssessment, LayerCatalogItem, MapLayerData, RainViewerMetadata, Source } from "./types";
 
 const portSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::port-facilities/about";
 const railSourceUrl = "https://data-usdot.opendata.arcgis.com/datasets/usdot::rail-lines/about";
@@ -86,15 +86,15 @@ export const demoSources: Source[] = [
 
 const catalogLabels: Array<[string, string, string, string]> = [
   ["nws_alerts", "NWS active alerts", "LIVE", "weather"], ["nws_forecasts", "NWS forecasts", "NOT_CONNECTED", "weather"], ["nws_observations", "NWS observations", "NOT_CONNECTED", "weather"], ["nws_storm_reports", "NWS storm reports", "NOT_CONNECTED", "weather"],
-  ["usgs_earthquakes", "USGS earthquakes", "LIVE", "seismic"], ["usgs_water", "USGS water services", "NEAR_REAL_TIME", "hydrology"], ["nasa_firms", "NASA FIRMS active fire", "REQUIRES_CREDENTIALS", "fire"], ["airnow", "AirNow air quality", "REQUIRES_CREDENTIALS", "air_quality"], ["nhc_systems", "NHC current tropical systems", "NEAR_REAL_TIME", "tropical_weather"], ["noaa_coops", "NOAA CO-OPS water levels", "NOT_CONNECTED", "coastal"], ["nasa_eonet", "NASA EONET natural events", "NEAR_REAL_TIME", "natural_hazards"], ["aviation_weather", "Aviation Weather Center PIREPs", "NEAR_REAL_TIME", "aviation"],
-  ["bts", "BTS transportation assets", "REFERENCE", "transportation"], ["fra", "FRA rail network", "REFERENCE", "transportation"], ["faa", "FAA facilities and advisories", "NOT_CONNECTED", "aviation"], ["energy", "Energy infrastructure", "NOT_CONNECTED", "energy"], ["dams", "National dam inventory", "REFERENCE", "water_infrastructure"], ["hospitals", "Hospitals", "REFERENCE", "public_safety"], ["shelters", "Emergency shelters", "NOT_CONNECTED", "public_safety"], ["public_safety", "Public safety facilities", "NOT_CONNECTED", "public_safety"], ["mrms", "NOAA MRMS precipitation", "NOT_CONNECTED", "weather"], ["lightning", "NOAA lightning", "NOT_CONNECTED", "weather"], ["snow_temperature", "NOAA snow and temperature", "NOT_CONNECTED", "weather"], ["drought_soil", "Drought and soil moisture", "REFERENCE", "environment"], ["land_elevation", "USGS elevation", "REFERENCE", "terrain"], ["watersheds_hydrography", "USGS watersheds and hydrography", "REFERENCE", "hydrology"], ["census", "U.S. Census geography", "REFERENCE", "demographics"], ["fema_nri", "FEMA National Risk Index", "REFERENCE", "risk"], ["fema_declarations", "FEMA current designated counties", "NEAR_REAL_TIME", "emergency_management"], ["social_vulnerability", "CDC/ATSDR social vulnerability", "REFERENCE", "vulnerability"], ["cdc_wastewater", "CDC wastewater surveillance", "NOT_CONNECTED", "public_health"],
+  ["usgs_earthquakes", "USGS earthquakes", "LIVE", "seismic"], ["usgs_water", "USGS water services", "NEAR_REAL_TIME", "hydrology"], ["nasa_firms", "NASA FIRMS active fire", "REQUIRES_CREDENTIALS", "fire"], ["airnow", "AirNow air quality", "REQUIRES_CREDENTIALS", "air_quality"], ["nhc_systems", "NHC current tropical systems", "NEAR_REAL_TIME", "tropical_weather"], ["noaa_coops", "NOAA CO-OPS water levels", "NOT_CONNECTED", "coastal"], ["nasa_eonet", "NASA EONET natural events", "NEAR_REAL_TIME", "natural_hazards"], ["aviation_weather", "Aviation Weather Center PIREPs", "NEAR_REAL_TIME", "aviation"], ["road511", "Road511 traffic events", "REQUIRES_CREDENTIALS", "transportation"], ["open_meteo", "Open-Meteo model fields", "MODEL_FIELD", "weather"], ["rainviewer", "RainViewer radar overlay", "NEAR_REAL_TIME", "weather"],
+  ["bts", "BTS transportation assets", "REFERENCE", "transportation"], ["fra", "FRA rail network", "REFERENCE", "transportation"], ["faa", "FAA facilities and advisories", "NOT_CONNECTED", "aviation"], ["energy", "Energy infrastructure", "NOT_CONNECTED", "energy"], ["dams", "National dam inventory", "REFERENCE", "water_infrastructure"], ["hospitals", "Hospitals", "REFERENCE", "public_safety"], ["nppes", "CMS NPPES provider locations", "REFERENCE", "public_safety"], ["shelters", "Emergency shelters", "NOT_CONNECTED", "public_safety"], ["public_safety", "Public safety facilities", "NOT_CONNECTED", "public_safety"], ["mrms", "NOAA MRMS precipitation", "NOT_CONNECTED", "weather"], ["lightning", "NOAA lightning", "NOT_CONNECTED", "weather"], ["snow_temperature", "NOAA snow and temperature", "NOT_CONNECTED", "weather"], ["drought_soil", "Drought and soil moisture", "REFERENCE", "environment"], ["land_elevation", "USGS elevation", "REFERENCE", "terrain"], ["watersheds_hydrography", "USGS watersheds and hydrography", "REFERENCE", "hydrology"], ["census", "U.S. Census state geography", "REFERENCE", "demographics"], ["fema_nri", "FEMA National Risk Index", "REFERENCE", "risk"], ["fema_declarations", "FEMA current designated counties", "NEAR_REAL_TIME", "emergency_management"], ["social_vulnerability", "CDC/ATSDR social vulnerability", "REFERENCE", "vulnerability"], ["cdc_wastewater", "CDC wastewater surveillance", "NOT_CONNECTED", "public_health"],
 ];
 
 export const demoLayerCatalog: LayerCatalogItem[] = catalogLabels.map(([key, name, status, category]) => ({
-  key, name, category, geometry_kind: "source geometry", data_kind: "catalog metadata only", temporal_semantics: "source timestamp", applies_to_48h_window: status !== "REFERENCE", endpoint: "", status, adapter_version: "1.0.0", last_refresh: null, counts: {}, source_key: ({ nws_alerts: "nws", nws_observations: "nws_observations", usgs_earthquakes: "usgs", usgs_water: "usgs_water", nhc_systems: "nhc", nasa_firms: "nasa_firms", airnow: "airnow", noaa_coops: "noaa_coops", nasa_eonet: "nasa_eonet", aviation_weather: "aviation_weather", fema_declarations: "fema_declarations" } as Record<string, string>)[key] ?? null, error: null, provenance: {}, coverage: {},
+  key, name, category, geometry_kind: "source geometry", data_kind: "catalog metadata only", temporal_semantics: "source timestamp", applies_to_48h_window: status !== "REFERENCE", endpoint: "", status, adapter_version: "1.0.0", last_refresh: null, counts: {}, source_key: ({ nws_alerts: "nws", nws_observations: "nws_observations", usgs_earthquakes: "usgs", usgs_water: "usgs_water", nhc_systems: "nhc", nasa_firms: "nasa_firms", airnow: "airnow", noaa_coops: "noaa_coops", nasa_eonet: "nasa_eonet", aviation_weather: "aviation_weather", fema_declarations: "fema_declarations", road511: "road511", open_meteo: "open_meteo", rainviewer: "rainviewer", nppes: "nppes", census: "census" } as Record<string, string>)[key] ?? null, error: null, provenance: {}, coverage: {},
 }));
 
-export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; infrastructure: InfrastructureAsset[]; assessments: InfrastructureAssessment[]; layers: LayerCatalogItem[]; windowStart: string; windowEnd: string; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
+export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources: Source[]; infrastructure: InfrastructureAsset[]; assessments: InfrastructureAssessment[]; layers: LayerCatalogItem[]; overlays: Record<string, MapLayerData>; radar: RainViewerMetadata | null; windowStart: string; windowEnd: string; mode: "LIVE" | "DEMO"; fetchedAt: string }> {
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
   try {
     const [eventsResponse, sourcesResponse, infrastructureResponse, catalogResponse] = await Promise.all([
@@ -119,9 +119,25 @@ export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources
       // Assessment data is optional to the source/event live path. The UI
       // keeps the derived panel empty and labeled when this endpoint is down.
     }
-    return { events: eventBody.items, sources: sourceBody, infrastructure: infrastructureBody.items, assessments, layers: catalogBody.items, windowStart: eventBody.window_start, windowEnd: eventBody.window_end, mode: "LIVE", fetchedAt: new Date().toISOString() };
+    const overlays: Record<string, MapLayerData> = {};
+    for (const key of ["open_meteo", "nppes", "census"]) {
+      try {
+        const response = await fetch(`${base}/layers/${key}/data?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2600) });
+        if (response.ok) overlays[key] = (await response.json()) as MapLayerData;
+      } catch {
+        // Optional overlay failures must not hide the operational event feed.
+      }
+    }
+    let radar: RainViewerMetadata | null = null;
+    try {
+      const response = await fetch(`${base}/layers/rainviewer/metadata`, { cache: "no-store", signal: AbortSignal.timeout(2600) });
+      if (response.ok) radar = (await response.json()) as RainViewerMetadata;
+    } catch {
+      // Radar metadata is optional and unavailable metadata stays honest.
+    }
+    return { events: eventBody.items, sources: sourceBody, infrastructure: infrastructureBody.items, assessments, layers: catalogBody.items, overlays, radar, windowStart: eventBody.window_start, windowEnd: eventBody.window_end, mode: "LIVE", fetchedAt: new Date().toISOString() };
   } catch {
     const now = new Date();
-    return { events: demoEvents, sources: demoSources, infrastructure: demoInfrastructure, assessments: [], layers: demoLayerCatalog, windowStart: new Date(now.getTime() - 48 * 3600_000).toISOString(), windowEnd: now.toISOString(), mode: "DEMO", fetchedAt: now.toISOString() };
+    return { events: demoEvents, sources: demoSources, infrastructure: demoInfrastructure, assessments: [], layers: demoLayerCatalog, overlays: {}, radar: null, windowStart: new Date(now.getTime() - 48 * 3600_000).toISOString(), windowEnd: now.toISOString(), mode: "DEMO", fetchedAt: now.toISOString() };
   }
 }

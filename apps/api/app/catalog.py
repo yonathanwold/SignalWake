@@ -85,12 +85,16 @@ CATALOG: tuple[CatalogSpec, ...] = (
     _spec("noaa_coops", "NOAA CO-OPS water levels", "coastal", "Point", "station observations", "observation time", True, "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter", "NEAR_REAL_TIME", source_key="noaa_coops", coverage={"mode": "bounded station set", "max_stations": 25, "max_features": 25}),
     _spec("nasa_eonet", "NASA EONET natural events", "natural_hazards", "Point/Line/Polygon", "curated near-real-time natural events", "geometry date and event closed time", True, "https://eonet.gsfc.nasa.gov/api/v3/events/geojson?status=all&days=2&bbox=-130,55,-60,20&limit=500", "NEAR_REAL_TIME", source_key="nasa_eonet", coverage={"mode": "bounded USA bbox", "days_max": 2, "max_features": 500}),
     _spec("aviation_weather", "Aviation Weather Center PIREPs", "aviation", "Point", "real aircraft reports", "observation or receipt time", True, "https://aviationweather.gov/api/data/pirep?age=48&format=geojson", "NEAR_REAL_TIME", source_key="aviation_weather", coverage={"mode": "single bounded query", "age_hours_max": 48, "max_features": 400}),
+    _spec("road511", "Road511 traffic events", "transportation", "Point", "credentialed traffic events", "start, update, and end times", True, "https://api.road511.com/api/v1/events", "REQUIRES_CREDENTIALS", source_key="road511", coverage={"requires": "ROAD511_API_KEY", "mode": "bounded bbox plus jurisdiction", "max_features": 500}),
+    _spec("open_meteo", "Open-Meteo model fields", "weather", "Point/Field", "forecast model field", "model run/current timestamp", True, "https://api.open-meteo.com/v1/forecast", "MODEL_FIELD", source_key="open_meteo", coverage={"mode": "18-point CONUS grid", "past_hours_max": 24, "max_features": 200, "not_observed": True}),
+    _spec("rainviewer", "RainViewer radar overlay", "weather", "Raster/Tile", "radar tile overlay", "provider frame timestamp", True, "https://api.rainviewer.com/public/weather-maps.json", "NEAR_REAL_TIME", source_key="rainviewer", coverage={"mode": "metadata plus provider tile template", "markers": False}),
     _spec("bts", "BTS transportation assets", "transportation", "Point/Line/Polygon", "reference assets", "source publication/update time", False, "https://data-usdot.opendata.arcgis.com/", "REFERENCE", source_key="bts_ports"),
     _spec("fra", "FRA rail network", "transportation", "Line", "reference assets", "source publication/update time", False, "https://data-usdot.opendata.arcgis.com/", "REFERENCE", source_key="fra_rail"),
     _spec("faa", "FAA facilities and advisories", "aviation", "Point/Polygon", "reference and operational data", "source timestamp", True, "https://www.faa.gov/air_traffic/flight_info/aeronav/aero_data/", "NOT_CONNECTED"),
     _spec("energy", "Energy infrastructure", "energy", "Point/Line/Polygon", "reference assets", "source publication/update time", False, "https://atlas.eia.gov/", "NOT_CONNECTED"),
     _spec("dams", "National dam inventory", "water_infrastructure", "Point", "reference assets", "source publication/update time", False, "https://nid.sec.usace.army.mil/", "REFERENCE"),
     _spec("hospitals", "Hospitals", "public_safety", "Point", "reference assets", "source publication/update time", False, "https://data.cms.gov/", "REFERENCE"),
+    _spec("nppes", "CMS NPPES provider locations", "public_safety", "Point", "reference provider locations", "provider registry update time", False, "https://npiregistry.cms.hhs.gov/api/?version=2.1", "REFERENCE", source_key="nppes", coverage={"mode": "bounded state query", "max_features": 200, "coordinates": "provider-supplied only"}),
     _spec("shelters", "Emergency shelters", "public_safety", "Point", "local operational data", "publisher timestamp", True, "https://www.fema.gov/openfema-data-page", "NOT_CONNECTED"),
     _spec("public_safety", "Public safety facilities", "public_safety", "Point/Polygon", "reference assets", "source publication/update time", False, "https://data.gov/", "NOT_CONNECTED"),
     _spec("mrms", "NOAA MRMS precipitation", "weather", "Raster/Tile", "near-real-time raster", "scan/valid time", True, "https://www.nssl.noaa.gov/projects/mrms/", "NOT_CONNECTED"),
@@ -99,7 +103,7 @@ CATALOG: tuple[CatalogSpec, ...] = (
     _spec("drought_soil", "Drought and soil moisture", "environment", "Raster/Polygon", "indices and observations", "observation/valid time", True, "https://droughtmonitor.unl.edu/", "REFERENCE"),
     _spec("land_elevation", "USGS elevation", "terrain", "Raster/Tile", "reference raster", "static publication", False, "https://www.usgs.gov/3d-elevation-program", "REFERENCE"),
     _spec("watersheds_hydrography", "USGS watersheds and hydrography", "hydrology", "Line/Polygon/Tile", "reference geography", "static publication", False, "https://www.usgs.gov/national-hydrography", "REFERENCE"),
-    _spec("census", "U.S. Census geography", "demographics", "Polygon", "reference geography", "vintage/publication", False, "https://www.census.gov/geographies/mapping-files.html", "REFERENCE"),
+    _spec("census", "U.S. Census state geography", "demographics", "Polygon/MultiPolygon", "reference geography", "vintage/publication", False, "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State/MapServer/0/query", "REFERENCE", source_key="census", coverage={"mode": "bounded state GeoJSON", "max_features": 60, "coordinates": "provider geometry"}),
     _spec("fema_nri", "FEMA National Risk Index", "risk", "Polygon", "reference risk indices", "vintage/publication", False, "https://hazards.fema.gov/nri/", "REFERENCE"),
     _spec("fema_declarations", "FEMA current designated counties", "emergency_management", "Polygon/MultiPolygon", "current designated-county polygons", "current designation post/amendment/fetch time", True, "https://gis.fema.gov/arcgis/rest/services/FEMA/DECS_ALL/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson", "NEAR_REAL_TIME", source_key="fema_declarations", coverage={"mode": "current designated counties", "max_features": 2000, "historical_declaration_dates": "preserved in payload, not used as current observation time"}),
     _spec("social_vulnerability", "CDC/ATSDR social vulnerability", "vulnerability", "Polygon", "reference index", "vintage/publication", False, "https://www.atsdr.cdc.gov/placeandhealth/svi/", "REFERENCE"),
@@ -139,6 +143,14 @@ def _coverage(spec: CatalogSpec) -> dict[str, Any]:
         coverage.update({"bbox": settings.aviation_weather_bbox or None, "age_hours": settings.aviation_weather_age_hours, "max_features": settings.aviation_weather_limit})
     elif spec.key == "fema_declarations":
         coverage.update({"max_features": settings.fema_declarations_limit, "semantics": "current designations, not historical declarations"})
+    elif spec.key == "road511":
+        coverage.update({"bbox": settings.road511_bbox, "jurisdiction": settings.road511_jurisdiction, "max_features": settings.road511_limit, "configured": bool(settings.road511_api_key)})
+    elif spec.key == "open_meteo":
+        coverage.update({"coordinates": settings.open_meteo_coordinates, "past_hours": settings.open_meteo_past_hours, "max_features": settings.open_meteo_limit, "classification": "MODEL_FIELD"})
+    elif spec.key == "nppes":
+        coverage.update({"state": settings.nppes_state, "max_features": settings.nppes_limit})
+    elif spec.key == "census":
+        coverage.update({"max_features": settings.census_states_limit})
     return coverage
 
 
