@@ -166,17 +166,17 @@ async def test_events_rejects_historical_override_outside_current_48_hours(db_fa
 
 
 @pytest.mark.asyncio
-async def test_events_and_layers_accept_2000_but_reject_larger_limits(db_factory):
+async def test_events_and_layers_accept_4000_but_reject_larger_limits(db_factory):
     app.state.session_factory = db_factory
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        events = await client.get("/events", params={"limit": 2000})
-        too_many_events = await client.get("/events", params={"limit": 2001})
-        layer = await client.get("/layers/nasa_firms/data", params={"limit": 2000})
-        too_many_layer = await client.get("/layers/nasa_firms/data", params={"limit": 2001})
+        events = await client.get("/events", params={"limit": 4000})
+        too_many_events = await client.get("/events", params={"limit": 4001})
+        layer = await client.get("/layers/nasa_firms/data", params={"limit": 4000})
+        too_many_layer = await client.get("/layers/nasa_firms/data", params={"limit": 4001})
     assert events.status_code == 200
-    assert events.json()["limit"] == 2000
+    assert events.json()["limit"] == 4000
     assert too_many_events.status_code == 422
     assert layer.status_code == 200
-    assert layer.json()["bounded_limit"] == 2000
+    assert layer.json()["bounded_limit"] == 4000
     assert too_many_layer.status_code == 422

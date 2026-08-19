@@ -200,7 +200,7 @@ time and never by the mutable current projection.
 - `GET /sources/catalog` or `GET /layers` — catalog of live, near-real-time, reference, credentialed, and unconnected families with explicit geometry, freshness, and provenance metadata.
 - `GET /layers/{key}/data` — bounded GeoJSON-like projection for a connected event/reference layer; unavailable layers return no features and their honest status.
 - `GET /layers/rainviewer/metadata` — bounded provider radar-frame metadata and tile URL template; raster tiles are never converted into event markers. Open-Meteo model points, NPPES locations, and Census state polygons use bounded `/layers/{key}/data` projections but remain outside persisted observed-event history.
-- `GET /events` — latest-first events with `bbox`, `source`, `type`, `severity`, `start_time`, `end_time`, `limit` (maximum 2,000), `cursor`, and `page` filters. The default and maximum operational window is the past 48 hours UTC; observed/effective/received times and overlapping validity intervals are included.
+- `GET /events` — latest-first events with `bbox`, `source`, `type`, `severity`, `start_time`, `end_time`, `limit` (maximum 4,000), `cursor`, and `page` filters. The default and maximum operational window is the past 48 hours UTC; observed/effective/received times and overlapping validity intervals are included. Individual source adapters may use lower caps.
 - `GET /events/{id}` — event detail including provenance and raw observation reference.
 - `GET /infrastructure` — bounded reference assets with `bbox`, `type`, `source`, `region`, `limit`, `cursor`, and `page` filters.
 - `GET /infrastructure/{id}` — one reference asset with geometry, source attribution/license, timestamps, and provenance.

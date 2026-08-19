@@ -98,7 +98,7 @@ export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
   try {
     const [eventsResponse, sourcesResponse, infrastructureResponse, catalogResponse] = await Promise.all([
-      fetch(`${base}/events?limit=2000`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
+      fetch(`${base}/events?limit=4000`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/sources`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/infrastructure?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
       fetch(`${base}/sources/catalog`, { cache: "no-store", signal: AbortSignal.timeout(2200) }),
