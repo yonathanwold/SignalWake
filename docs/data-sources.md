@@ -53,6 +53,22 @@ converted into live events.
   Startup uses a capped metadata subset (maximum 25 stations), or explicitly
   configured `NOAA_COOPS_STATION_IDS`; station coordinates always come from the
   metadata response.
+- **NASA EONET** — `events/geojson` curated natural events, bounded to the
+  configured USA bbox, two days, and at most 500 features. Event categories,
+  closed state, source IDs, geometry entries, and provider dates remain in the
+  raw payload. Point, line, and polygon geometry is preserved exactly; a
+  multi-geometry event uses its latest dated geometry for the canonical feature.
+- **AviationWeather.gov PIREPs** — one `api/data/pirep` GeoJSON request with a
+  maximum 48-hour age and approximately 400 provider records. These are real
+  aircraft reports, not aircraft tracking. Provider point geometry and report
+  or receipt timestamps are retained. A valid HTTP 204 is an empty successful
+  poll, not malformed JSON.
+- **FEMA current designated counties** — the FEMA DECS_ALL ArcGIS
+  FeatureServer GeoJSON query, capped at 2,000 polygons. This layer describes
+  current designated counties; declaration and incident dates remain in the
+  payload but are not treated as a fresh observation timestamp. Post,
+  amendment, or fetch time supplies the current operational timestamp, and the
+  provider polygon is preserved exactly.
 
 ## Credentialed live adapters
 
@@ -66,7 +82,8 @@ converted into live events.
   `REQUIRES_CREDENTIALS`.
 
 NWS alerts, NWS station observations, USGS earthquakes, USGS water, NHC systems,
-NOAA CO-OPS, and configured FIRMS/AirNow adapters are persisted through
+NOAA CO-OPS, NASA EONET, AviationWeather.gov PIREPs, FEMA current designations,
+and configured FIRMS/AirNow adapters are persisted through
 the same idempotent raw-observation/event path. Startup still performs one
 bounded pass; it is not a scheduler.
 
@@ -76,7 +93,7 @@ bounded pass; it is not a scheduler.
 broader operational map. It includes NWS forecasts/observations/storm reports,
 NASA FIRMS, AirNow, NOAA CO-OPS, BTS/FRA, FAA, energy, dams, hospitals,
 shelters/public safety, MRMS, lightning, snow/temperature, drought/soil,
-land/elevation, watersheds/hydrography, Census, FEMA NRI/declarations, social
+land/elevation, watersheds/hydrography, Census, FEMA NRI, social
 vulnerability, and CDC wastewater. Every row states its geometry/data kind,
 source URL, temporal semantics, adapter version, refresh/counts, and one of
 `LIVE`, `NEAR_REAL_TIME`, `REFERENCE`, `REQUIRES_CREDENTIALS`,
@@ -91,11 +108,22 @@ tile metadata rather than downloaded into the browser.
 
 ## Startup ingestion behavior
 
-When `INGEST_ON_STARTUP=true` (the default), the API runs one bounded fetch/normalize/persist pass for NWS alerts, NWS station observations, USGS earthquakes, bounded USGS water states, NHC, and NOAA CO-OPS. FIRMS and AirNow join the pass only when their real credentials are configured. Each source records `last_attempt_at`, `last_success_at`, `last_http_status`, `last_error`, and `freshness_seconds`. Valid features become `LIVE` canonical events with their raw payload and provenance; malformed features are logged and skipped while the remaining features continue.
+When `INGEST_ON_STARTUP=true` (the default), the API runs one bounded fetch/normalize/persist pass for NWS alerts, NWS station observations, USGS earthquakes, bounded USGS water states, NHC, NOAA CO-OPS, NASA EONET, AviationWeather.gov PIREPs, and FEMA current designated counties. FIRMS and AirNow join the pass only when their real credentials are configured. Each source records `last_attempt_at`, `last_success_at`, `last_http_status`, `last_error`, and `freshness_seconds`. Valid features become `LIVE` canonical events with their raw payload and provenance; malformed features are logged and skipped while the remaining features continue.
 
 The web map requests `/events?limit=2000`, matching the API's maximum event page size so the complete bounded source window can render without requesting unbounded history. Point features use a MapLibre cluster source at national zoom; the underlying source coordinates remain unchanged when a cluster expands.
 
 The pass is idempotent by source-scoped record identity and payload hash. `USE_DEMO_DATA=true` is only a fallback for the NWS/USGS deterministic fixtures: fixture rows are seeded for a source when its live fetch fails or produces no usable events, and never replace a source that produced successful `LIVE` events. No permanent queue or scheduler is included; a later worker can call the same service boundary. The API never fabricates freshness: unavailable values are represented as `null`/`UNKNOWN`, and a source error is surfaced as `ERROR`.
+
+## Public API candidates deliberately not integrated
+
+The public-apis index was audited for useful geospatial feeds, but SIGNALWAKE
+does not bulk-import every listed service. Open-Meteo is forecast/grid data
+rather than observed point events; OpenSky is aircraft state rather than a
+hazard report; TransitLand is reference/transit network data; RainViewer is an
+aggregated radar tile service; and OpenAQ requires credentials and overlaps
+the AirNow air-quality role. These remain documented candidates until a
+bounded contract, geometry semantics, freshness rule, and source-specific
+provenance path are justified.
 
 ## Infrastructure reference sources
 

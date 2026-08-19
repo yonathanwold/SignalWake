@@ -83,6 +83,8 @@ CATALOG: tuple[CatalogSpec, ...] = (
     _spec("airnow", "AirNow air quality", "air_quality", "Point", "near-real-time observations", "observation time", True, "https://www.airnowapi.org/aq/data/", "REQUIRES_CREDENTIALS", source_key="airnow", coverage={"requires": "AIRNOW_API_KEY", "max_features": 1000}),
     _spec("nhc_systems", "NHC current tropical systems", "tropical_weather", "Point/Polygon", "current systems", "advisory and valid times", True, "https://www.nhc.noaa.gov/CurrentStorms.json", "NEAR_REAL_TIME", source_key="nhc"),
     _spec("noaa_coops", "NOAA CO-OPS water levels", "coastal", "Point", "station observations", "observation time", True, "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter", "NEAR_REAL_TIME", source_key="noaa_coops", coverage={"mode": "bounded station set", "max_stations": 25, "max_features": 25}),
+    _spec("nasa_eonet", "NASA EONET natural events", "natural_hazards", "Point/Line/Polygon", "curated near-real-time natural events", "geometry date and event closed time", True, "https://eonet.gsfc.nasa.gov/api/v3/events/geojson?status=all&days=2&bbox=-130,55,-60,20&limit=500", "NEAR_REAL_TIME", source_key="nasa_eonet", coverage={"mode": "bounded USA bbox", "days_max": 2, "max_features": 500}),
+    _spec("aviation_weather", "Aviation Weather Center PIREPs", "aviation", "Point", "real aircraft reports", "observation or receipt time", True, "https://aviationweather.gov/api/data/pirep?age=48&format=geojson", "NEAR_REAL_TIME", source_key="aviation_weather", coverage={"mode": "single bounded query", "age_hours_max": 48, "max_features": 400}),
     _spec("bts", "BTS transportation assets", "transportation", "Point/Line/Polygon", "reference assets", "source publication/update time", False, "https://data-usdot.opendata.arcgis.com/", "REFERENCE", source_key="bts_ports"),
     _spec("fra", "FRA rail network", "transportation", "Line", "reference assets", "source publication/update time", False, "https://data-usdot.opendata.arcgis.com/", "REFERENCE", source_key="fra_rail"),
     _spec("faa", "FAA facilities and advisories", "aviation", "Point/Polygon", "reference and operational data", "source timestamp", True, "https://www.faa.gov/air_traffic/flight_info/aeronav/aero_data/", "NOT_CONNECTED"),
@@ -99,7 +101,7 @@ CATALOG: tuple[CatalogSpec, ...] = (
     _spec("watersheds_hydrography", "USGS watersheds and hydrography", "hydrology", "Line/Polygon/Tile", "reference geography", "static publication", False, "https://www.usgs.gov/national-hydrography", "REFERENCE"),
     _spec("census", "U.S. Census geography", "demographics", "Polygon", "reference geography", "vintage/publication", False, "https://www.census.gov/geographies/mapping-files.html", "REFERENCE"),
     _spec("fema_nri", "FEMA National Risk Index", "risk", "Polygon", "reference risk indices", "vintage/publication", False, "https://hazards.fema.gov/nri/", "REFERENCE"),
-    _spec("fema_declarations", "FEMA declarations", "emergency_management", "Point/Polygon", "declarations", "declaration and incident dates", True, "https://www.fema.gov/api/open/v2/DisasterDeclarationsSummaries", "NOT_CONNECTED"),
+    _spec("fema_declarations", "FEMA current designated counties", "emergency_management", "Polygon/MultiPolygon", "current designated-county polygons", "current designation post/amendment/fetch time", True, "https://gis.fema.gov/arcgis/rest/services/FEMA/DECS_ALL/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson", "NEAR_REAL_TIME", source_key="fema_declarations", coverage={"mode": "current designated counties", "max_features": 2000, "historical_declaration_dates": "preserved in payload, not used as current observation time"}),
     _spec("social_vulnerability", "CDC/ATSDR social vulnerability", "vulnerability", "Polygon", "reference index", "vintage/publication", False, "https://www.atsdr.cdc.gov/placeandhealth/svi/", "REFERENCE"),
     _spec("cdc_wastewater", "CDC wastewater surveillance", "public_health", "Point/Polygon", "near-real-time observations", "sample/report time", True, "https://www.cdc.gov/nwss/rv/COVID19-nationalData.html", "NOT_CONNECTED"),
 )
@@ -131,6 +133,12 @@ def _coverage(spec: CatalogSpec) -> dict[str, Any]:
                 "station_limit": settings.noaa_coops_station_limit,
             }
         )
+    elif spec.key == "nasa_eonet":
+        coverage.update({"bbox": settings.nasa_eonet_bbox, "days": settings.nasa_eonet_days, "max_features": settings.nasa_eonet_limit})
+    elif spec.key == "aviation_weather":
+        coverage.update({"bbox": settings.aviation_weather_bbox or None, "age_hours": settings.aviation_weather_age_hours, "max_features": settings.aviation_weather_limit})
+    elif spec.key == "fema_declarations":
+        coverage.update({"max_features": settings.fema_declarations_limit, "semantics": "current designations, not historical declarations"})
     return coverage
 
 

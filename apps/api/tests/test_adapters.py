@@ -6,8 +6,11 @@ import httpx
 import pytest
 
 from app.adapters.airnow import AirNowAdapter
+from app.adapters.aviation_weather import AviationWeatherAdapter
 from app.adapters.base import AdapterError
 from app.adapters.coops import COOPSAdapter
+from app.adapters.eonet import EONETAdapter
+from app.adapters.fema import FEMADeclarationsAdapter
 from app.adapters.firms import FIRMSAdapter
 from app.adapters.nws import NWSAdapter
 from app.adapters.nws_observations import NWSObservationsAdapter
@@ -25,6 +28,9 @@ def test_extended_event_types_match_adapter_values():
     assert EventType.FIRE_DETECTION.value == "fire_detection"
     assert EventType.AIR_QUALITY_OBSERVATION.value == "air_quality_observation"
     assert EventType.COOPS_WATER_LEVEL.value == "coops_water_level"
+    assert EventType.NATURAL_EVENT.value == "natural_event"
+    assert EventType.AVIATION_REPORT.value == "aviation_report"
+    assert EventType.FEMA_DESIGNATION.value == "fema_designation"
 
 
 @pytest.mark.asyncio
@@ -188,3 +194,120 @@ async def test_credentialed_adapters_without_keys_return_no_records_without_netw
     async with httpx.AsyncClient(transport=transport) as client:
         assert await firms.fetch(client) == []
         assert await airnow.fetch(client) == []
+
+
+@pytest.mark.asyncio
+async def test_eonet_bounds_request_and_preserves_latest_polygon_geometry():
+    adapter = EONETAdapter(
+        "https://example.test/eonet?status=all",
+        "signalwake-test",
+        bbox="-130,55,-60,20",
+        days=2,
+        limit=3,
+    )
+    requests: list[httpx.QueryParams] = []
+    body = {
+        "features": [
+            {
+                "id": "EONET_123",
+                "properties": {
+                    "title": "Test natural event",
+                    "description": "Provider description",
+                    "categories": [{"id": "wildfires", "title": "Wildfires"}],
+                },
+                "geometry": [
+                    {"date": "2026-08-18T12:00:00Z", "type": "Polygon", "coordinates": [[[1, 2], [3, 4], [1, 2]]]},
+                    {"date": "2026-08-18T14:00:00Z", "type": "Polygon", "coordinates": [[[5, 6], [7, 8], [5, 6]]]},
+                ],
+            }
+        ]
+    }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.params)
+        return httpx.Response(200, json=body)
+
+    transport = httpx.MockTransport(respond)
+    async with httpx.AsyncClient(transport=transport) as client:
+        features = await adapter.fetch(client)
+    assert requests[0]["days"] == "2"
+    assert requests[0]["limit"] == "3"
+    assert requests[0]["bbox"] == "-130,55,-60,20"
+    normalized = adapter.normalize(features[0])
+    assert normalized.event_type == "natural_event"
+    assert normalized.severity == "warning"
+    assert normalized.observed_at == datetime(2026, 8, 18, 14, tzinfo=timezone.utc)
+    assert normalized.geometry == body["features"][0]["geometry"][1]
+    assert normalized.latitude is None and normalized.longitude is None
+
+
+@pytest.mark.asyncio
+async def test_aviation_weather_204_is_successful_empty_and_query_is_bounded():
+    adapter = AviationWeatherAdapter("https://example.test/pirep?format=json", "signalwake-test", age_hours=48, limit=400)
+    request_params: dict[str, str] = {}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        request_params.update({key: value for key, value in request.url.params.items()})
+        return httpx.Response(204)
+
+    transport = httpx.MockTransport(respond)
+    async with httpx.AsyncClient(transport=transport) as client:
+        features = await adapter.fetch(client)
+    assert features == []
+    assert adapter.last_http_status == 204
+    assert request_params == {"format": "geojson", "age": "48"}
+
+
+@pytest.mark.asyncio
+async def test_aviation_weather_normalizes_provider_epoch_and_exact_point():
+    adapter = AviationWeatherAdapter("https://example.test/pirep", "signalwake-test")
+    feature = {
+        "type": "Feature",
+        "id": "PIREP-7",
+        "properties": {"hazard": "TURB", "intensity": "SEVERE", "obsTime": 1787061600000, "raw": "UA /OV DCA"},
+        "geometry": {"type": "Point", "coordinates": [-77.04, 38.85]},
+    }
+    normalized = adapter.normalize(feature)
+    assert normalized.event_type == "aviation_report"
+    assert normalized.severity == "warning"
+    assert normalized.observed_at == datetime(2026, 8, 18, 14, tzinfo=timezone.utc)
+    assert normalized.geometry == feature["geometry"]
+    assert normalized.latitude == 38.85 and normalized.longitude == -77.04
+
+
+@pytest.mark.asyncio
+async def test_fema_bounds_request_and_preserves_current_designated_polygon():
+    adapter = FEMADeclarationsAdapter("https://example.test/fema/query", "signalwake-test", limit=7)
+    request_params: dict[str, str] = {}
+    feature = {
+        "type": "Feature",
+        "id": "fid-1",
+        "properties": {
+            "dec_number": 1234,
+            "state_name": "Virginia",
+            "state_fips": "51",
+            "cnty_fips": "001",
+            "name": "Example County",
+            "designate": "DR",
+            "declarationTitle": "Flood",
+            "fema_postdate": "2026-08-18T14:00:00Z",
+        },
+        "geometry": {"type": "Polygon", "coordinates": [[[1, 2], [3, 4], [1, 2]]]},
+    }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        request_params.update({key: value for key, value in request.url.params.items()})
+        return httpx.Response(200, json={"type": "FeatureCollection", "features": [feature]})
+
+    transport = httpx.MockTransport(respond)
+    async with httpx.AsyncClient(transport=transport) as client:
+        features = await adapter.fetch(client)
+    assert request_params["resultRecordCount"] == "7"
+    assert request_params["returnGeometry"] == "true"
+    assert request_params["outSR"] == "4326"
+    normalized = adapter.normalize(features[0])
+    assert normalized.source_event_id == "1234:51:001:DR"
+    assert normalized.event_type == "fema_designation"
+    assert normalized.severity == "warning"
+    assert normalized.observed_at == datetime(2026, 8, 18, 14, tzinfo=timezone.utc)
+    assert normalized.geometry == feature["geometry"]

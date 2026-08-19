@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     noaa_coops_station_limit: int = 10
     noaa_coops_metadata_url: str = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=waterlevels&units=metric"
     noaa_coops_data_url: str = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
+    nasa_eonet_url: str = "https://eonet.gsfc.nasa.gov/api/v3/events/geojson?status=all&days=2&bbox=-130,55,-60,20&limit=500"
+    nasa_eonet_bbox: str = "-130,55,-60,20"
+    nasa_eonet_days: int = 2
+    nasa_eonet_limit: int = 500
+    aviation_weather_url: str = "https://aviationweather.gov/api/data/pirep?age=48&format=geojson"
+    aviation_weather_bbox: str = ""
+    aviation_weather_age_hours: int = 48
+    aviation_weather_limit: int = 400
+    fema_declarations_url: str = "https://gis.fema.gov/arcgis/rest/services/FEMA/DECS_ALL/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    fema_declarations_limit: int = 2000
     source_user_agent: str = "signalwake-portfolio/0.1 (contact@example.com)"
     request_timeout_seconds: float = 15.0
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -60,6 +70,16 @@ class Settings(BaseSettings):
             raise ValueError("FIRMS_DAYS must be between 1 and 2 for the operational window")
         if self.noaa_coops_station_limit < 1 or self.noaa_coops_station_limit > 25:
             raise ValueError("NOAA_COOPS_STATION_LIMIT must be between 1 and 25")
+        if self.nasa_eonet_days < 1 or self.nasa_eonet_days > 2:
+            raise ValueError("NASA_EONET_DAYS must be between 1 and 2")
+        if self.nasa_eonet_limit < 1 or self.nasa_eonet_limit > 500:
+            raise ValueError("NASA_EONET_LIMIT must be between 1 and 500")
+        if self.aviation_weather_age_hours < 1 or self.aviation_weather_age_hours > 48:
+            raise ValueError("AVIATION_WEATHER_AGE_HOURS must be between 1 and 48")
+        if self.aviation_weather_limit < 1 or self.aviation_weather_limit > 400:
+            raise ValueError("AVIATION_WEATHER_LIMIT must be between 1 and 400")
+        if self.fema_declarations_limit < 1 or self.fema_declarations_limit > 2000:
+            raise ValueError("FEMA_DECLARATIONS_LIMIT must be between 1 and 2000")
         return self
 
 

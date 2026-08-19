@@ -16,7 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.adapters.airnow import AirNowAdapter
+from app.adapters.aviation_weather import AviationWeatherAdapter
 from app.adapters.coops import COOPSAdapter
+from app.adapters.eonet import EONETAdapter
+from app.adapters.fema import FEMADeclarationsAdapter
 from app.adapters.firms import FIRMSAdapter
 from app.adapters.nhc import NHCAdapter
 from app.adapters.nws import NWSAdapter
@@ -167,6 +170,31 @@ def adapters(settings: Settings):
             station_ids=[station.strip() for station in settings.noaa_coops_station_ids.split(",") if station.strip()],
             station_limit=settings.noaa_coops_station_limit,
         ),
+        EONETAdapter(
+            settings.nasa_eonet_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            settings.adapter_version,
+            bbox=settings.nasa_eonet_bbox,
+            days=settings.nasa_eonet_days,
+            limit=settings.nasa_eonet_limit,
+        ),
+        AviationWeatherAdapter(
+            settings.aviation_weather_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            settings.adapter_version,
+            bbox=settings.aviation_weather_bbox,
+            age_hours=settings.aviation_weather_age_hours,
+            limit=settings.aviation_weather_limit,
+        ),
+        FEMADeclarationsAdapter(
+            settings.fema_declarations_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            settings.adapter_version,
+            limit=settings.fema_declarations_limit,
+        ),
     ]
     if settings.firms_map_key:
         configured.append(
@@ -272,7 +300,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SIGNALWAKE API",
     version="0.1.0",
-    description="Authoritative NWS alerts and station observations, USGS earthquake and water observations, NHC systems, NOAA CO-OPS water levels, NASA FIRMS fires, and AirNow air quality normalized into canonical operational events.",
+    description="Authoritative NWS alerts and station observations, USGS earthquake and water observations, NHC systems, NOAA CO-OPS water levels, NASA EONET natural events, AviationWeather.gov PIREPs, current FEMA designated counties, NASA FIRMS fires, and AirNow air quality normalized into canonical operational events.",
     lifespan=lifespan,
 )
 app.state.startup_ready = True
@@ -696,6 +724,9 @@ async def layer_data(
             "nasa_firms",
             "airnow",
             "noaa_coops",
+            "nasa_eonet",
+            "aviation_weather",
+            "fema_declarations",
         }:
             rows, _, _ = await list_events(
                 session,

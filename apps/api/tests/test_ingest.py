@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import func, select
 
+from app.adapters.aviation_weather import AviationWeatherAdapter
 from app.adapters.base import AdapterError
 from app.adapters.nws import NWSAdapter
 from app.adapters.usgs import USGSAdapter
@@ -103,3 +104,23 @@ async def test_demo_fallback_skips_sources_with_live_events(db_factory):
         assert len(nws_events) == 1
         assert nws_events[0].classification == "LIVE"
         assert await session.scalar(select(func.count(Event.id))) == 3
+
+
+@pytest.mark.asyncio
+async def test_ingest_treats_aviation_204_as_successful_empty_poll(db_factory, monkeypatch):
+    async def empty_pireps(self, client=None):
+        self.last_http_status = 204
+        return []
+
+    monkeypatch.setattr(AviationWeatherAdapter, "fetch", empty_pireps)
+    adapter = AviationWeatherAdapter("https://example.test/pirep", "signalwake-test")
+    async with db_factory() as session:
+        report = await ingest_once(session, [adapter])
+        await session.commit()
+        source = await session.scalar(select(Source).where(Source.key == adapter.key))
+        assert source is not None
+        assert report.results[0].fetch_succeeded is True
+        assert report.results[0].error is None
+        assert source.last_http_status == 204
+        assert source.last_success_at is not None
+        assert source.last_error is None

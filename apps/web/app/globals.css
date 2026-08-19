@@ -401,6 +401,7 @@ a { color: inherit; }
 
 /* Keep live-state indicators crisp, without halo or glow treatments. */
 .replay-state-ready, .state-pulse, .severity-critical { box-shadow: none; }
+.legend-ring { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border: 1.5px solid; border-radius: 50%; background: #09111b; vertical-align: -1px; }
 
 .side-nav-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; margin-bottom: 10px; padding: 6px 11px; color: var(--faint); background: transparent; border: 1px solid var(--line); font: 9px var(--mono); letter-spacing: .1em; cursor: pointer; }
 .side-nav-toggle:hover, .side-nav-toggle:focus-visible { color: var(--text); border-color: var(--line-strong); }

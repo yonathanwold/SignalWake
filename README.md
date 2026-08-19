@@ -1,10 +1,10 @@
 # SIGNALWAKE
 
-SIGNALWAKE is a real-time geospatial event intelligence foundation. It turns authoritative National Weather Service alerts/station observations, USGS earthquake/water observations, National Hurricane Center systems, NOAA CO-OPS water levels, and optionally credentialed NASA FIRMS/AirNow observations into one canonical event model, then serves that model to a map-first web interface. A source/layer catalog records the wider weather, hazard, infrastructure, health, and vulnerability families without pretending unavailable feeds are connected. Reference geometry is searchable and inspectable; it is not a disruption score, dependency graph, or impact prediction.
+SIGNALWAKE is a real-time geospatial event intelligence foundation. It turns authoritative National Weather Service alerts/station observations, USGS earthquake/water observations, National Hurricane Center systems, NOAA CO-OPS water levels, NASA EONET natural events, AviationWeather.gov PIREPs, current FEMA designated counties, and optionally credentialed NASA FIRMS/AirNow observations into one canonical event model, then serves that model to a map-first web interface. A source/layer catalog records the wider weather, hazard, infrastructure, health, and vulnerability families without pretending unavailable feeds are connected. Reference geometry is searchable and inspectable; it is not a disruption score, dependency graph, or impact prediction.
 
 The first slice is intentionally honest about its boundary:
 
-- `LIVE` means a successful startup fetch, normalization, and persistence pass from a connected adapter: NWS alerts, NWS station observations, USGS earthquakes, bounded USGS water states, NHC systems, NOAA CO-OPS, or configured NASA FIRMS/AirNow. Operational API pages are bounded to 2,000 records within the past 48 hours.
+- `LIVE` means a successful startup fetch, normalization, and persistence pass from a connected adapter: NWS alerts, NWS station observations, USGS earthquakes, bounded USGS water states, NHC systems, NOAA CO-OPS, NASA EONET, AviationWeather.gov PIREPs, current FEMA designated counties, or configured NASA FIRMS/AirNow. Operational API pages are bounded to 2,000 records within the past 48 hours.
 - `DEMO` means deterministic fixture data used only when startup ingestion is disabled, a source has no usable live events, or the browser cannot reach the API.
 - `DERIVED` means normalized event fields such as severity and type; it does not mean an infrastructure impact prediction.
 - `REFERENCE` means an imported infrastructure asset whose geometry and metadata came from a named public source. It is intentionally separate from live event observations.
@@ -34,7 +34,7 @@ The first slice is intentionally honest about its boundary:
    npm.cmd run dev
    ```
 
-Open `http://localhost:3000`. By default the API performs one bounded real fetch from connected public adapters during startup. With `USE_DEMO_DATA=true`, fixtures are used only per NWS/USGS source when that live pass is unavailable or produces no usable events; set it to `false` to run without fixture fallback. FIRMS and AirNow remain credential-gated and never use placeholder keys. The browser also falls back to clearly labeled deterministic demo events and catalog statuses when it cannot reach the API.
+Open `http://localhost:3000`. By default the API performs one bounded real fetch from connected public adapters during startup. With `USE_DEMO_DATA=true`, fixtures are used only per NWS/USGS source when that live pass is unavailable or produces no usable events; set it to `false` to run without fixture fallback. FIRMS and AirNow remain credential-gated and never use placeholder keys. NASA EONET, AviationWeather.gov PIREPs, and FEMA current-designation requests need no credentials. The browser also falls back to clearly labeled deterministic demo events and catalog statuses when it cannot reach the API.
 
 ### Import infrastructure reference data
 

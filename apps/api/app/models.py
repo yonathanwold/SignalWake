@@ -100,6 +100,9 @@ class EventType(str, enum.Enum):
     FIRE_DETECTION = "fire_detection"
     AIR_QUALITY_OBSERVATION = "air_quality_observation"
     COOPS_WATER_LEVEL = "coops_water_level"
+    NATURAL_EVENT = "natural_event"
+    AVIATION_REPORT = "aviation_report"
+    FEMA_DESIGNATION = "fema_designation"
 
 
 class Severity(str, enum.Enum):

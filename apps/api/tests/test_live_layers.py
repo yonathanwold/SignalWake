@@ -57,12 +57,19 @@ async def test_catalog_and_unavailable_layer_never_emit_fake_records(db_factory)
         catalog = await client.get("/sources/catalog")
         assert catalog.status_code == 200
         rows = {item["key"]: item for item in catalog.json()["items"]}
-        assert {"nws_alerts", "usgs_earthquakes", "nasa_firms", "cdc_wastewater"} <= rows.keys()
+        assert {"nws_alerts", "usgs_earthquakes", "nasa_firms", "nasa_eonet", "aviation_weather", "fema_declarations", "cdc_wastewater"} <= rows.keys()
         assert rows["nasa_firms"]["status"] == "REQUIRES_CREDENTIALS"
+        assert rows["nasa_eonet"]["status"] == "NEAR_REAL_TIME"
+        assert rows["aviation_weather"]["status"] == "NEAR_REAL_TIME"
+        assert rows["fema_declarations"]["status"] == "NEAR_REAL_TIME"
         unavailable = await client.get("/layers/nasa_firms/data")
         assert unavailable.status_code == 200
         assert unavailable.json()["feature_count"] == 0
         assert unavailable.json()["features"] == []
+        for key in ("nasa_eonet", "aviation_weather", "fema_declarations"):
+            empty = await client.get(f"/layers/{key}/data")
+            assert empty.status_code == 200
+            assert empty.json()["features"] == []
 
 
 @pytest.mark.asyncio

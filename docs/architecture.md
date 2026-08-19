@@ -224,6 +224,16 @@ time and never by the mutable current projection.
 - `GET /replay/state` — bounded UTC as-of projection with event/knowledge-time fields.
 - `GET /replay/compare` — bounded A/B change lists between two knowledge boundaries.
 
+The connected no-credential expansion uses three bounded adapters: NASA EONET
+natural events (USA bbox, two days, 500 features), AviationWeather.gov PIREPs
+(one query, 48-hour age, 400 features, with HTTP 204 empty success), and FEMA
+DECS_ALL current designated counties (WGS84 GeoJSON, 2,000 polygons). Each
+adapter persists the provider geometry and raw payload through the same
+source-scoped identity, source-health, and provenance path. FEMA's current
+designation endpoint is not treated as a historical declaration feed; old
+declaration dates remain payload facts while post/amendment/fetch time drives
+the operational observation boundary.
+
 The browser's map markers and feed rows are both projections of the same bounded `Event` response. The map also renders a catalog-driven rail of connected live layers and honest unavailable/reference states; it does not create records for catalog rows without data. Infrastructure layers and the reference inspector are projections of `/infrastructure`; the browser does not ship a full static dataset. MapLibre uses separate GeoJSON sources for events and infrastructure, with source-specific live toggles and a clustered point source at national zoom. The 48-hour UTC window is shown in the map toolbar.
 
 ## Spatial behavior and limits

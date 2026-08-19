@@ -191,6 +191,19 @@ async def ingest_once(session: AsyncSession, source_adapters: Iterable[SourceAda
                 normalized_count=normalized_count,
                 skipped_count=skipped_count,
             )
+        elif normalized_count == 0 and adapter.last_http_status == 204:
+            # AviationWeather.gov uses 204 to signal a valid empty PIREP
+            # result. Treat it as a successful poll rather than malformed
+            # data or a provider failure.
+            source.last_success_at = attempted_at
+            source.last_error = None
+            source.freshness_seconds = 0
+            run.error_category = None
+            log.info(
+                "source_ingest_empty_success",
+                source=adapter.key,
+                http_status=adapter.last_http_status,
+            )
         elif normalized_count == 0:
             error = "no usable records returned"
             source.last_error = error
