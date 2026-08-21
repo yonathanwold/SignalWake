@@ -68,6 +68,9 @@ async def ensure_source(session: AsyncSession, adapter: SourceAdapter) -> Source
         source.kind = adapter.key.upper()
         source.endpoint = adapter.endpoint
         source.adapter_version = adapter.adapter_version
+    refresh_seconds = getattr(adapter, "refresh_seconds", None)
+    if refresh_seconds is not None:
+        source.expected_update_interval_seconds = int(refresh_seconds)
     return source
 
 

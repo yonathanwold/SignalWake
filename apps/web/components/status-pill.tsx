@@ -1,6 +1,6 @@
 import type { CanonicalEvent } from "../lib/types";
 
-export function ClassificationPill({ value }: { value: CanonicalEvent["classification"] | "LIVE" | "DEMO" | "REFERENCE" }) {
+export function ClassificationPill({ value }: { value: CanonicalEvent["classification"] | "LIVE" | "DEMO" | "REFERENCE" | "OBSERVATION" }) {
   return <span className={`classification classification-${value.toLowerCase()}`}>{value}</span>;
 }
 

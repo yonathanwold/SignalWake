@@ -256,6 +256,7 @@ def layer_adapters(settings: Settings) -> dict[str, object]:
             bbox=settings.opensky_bbox,
             limit=settings.opensky_limit,
             refresh_seconds=settings.opensky_refresh_seconds,
+            max_stale_seconds=settings.opensky_max_stale_seconds,
         ),
         "open_meteo": OpenMeteoAdapter(
             settings.open_meteo_url,
@@ -806,6 +807,14 @@ async def layer_data(
                 map_addressable_count = len(features)
                 category_counts = {"observations": len(features)}
                 truncated = len(features) >= limit
+                adapter_status = getattr(adapter, "status", "LIVE")
+                cache_age_seconds = getattr(adapter, "cache_age_seconds", None)
+                cache_fetched_at = getattr(adapter, "cache_fetched_at", None)
+                observed_values = [
+                    str(feature.get("properties", {}).get("observed_at"))
+                    for feature in features
+                    if isinstance(feature, dict) and feature.get("properties", {}).get("observed_at")
+                ]
                 overlay_provenance = {
                     "provider": "OpenSky Network",
                     "endpoint": adapter.endpoint,
@@ -813,16 +822,21 @@ async def layer_data(
                     "adapter": adapter.__class__.__name__,
                     "classification": "OBSERVATION",
                     "semantics": "current aircraft state vectors; not hazards or events",
-                    "cache_age_seconds": getattr(adapter, "cache_age_seconds", None),
+                    "observed_at": max(observed_values) if observed_values else None,
+                    "cache_fetched_at": cache_fetched_at.isoformat() if isinstance(cache_fetched_at, datetime) else None,
+                    "cache_age_seconds": cache_age_seconds,
                     "refresh_seconds": getattr(adapter, "refresh_seconds", None),
-                    "lifecycle_status": getattr(adapter, "status", "LIVE"),
+                    "stale_after_seconds": getattr(adapter, "max_stale_seconds", None),
+                    "rate_limit_cooldown_seconds": getattr(adapter, "rate_limit_cooldown_seconds", None),
+                    "lifecycle_status": adapter_status,
                 }
                 if getattr(adapter, "last_error", None):
                     overlay_provenance["last_error"] = adapter.last_error
-                    item.status = "DEGRADED"
+                    item.status = adapter_status
                     item.error = adapter.last_error
                 else:
-                    item.status = "LIVE"
+                    item.status = adapter_status
+                    item.error = None
                 if hasattr(adapter, "key"):
                     source = await ensure_source(session, adapter)  # type: ignore[arg-type]
                     source.last_attempt_at = generated_at
@@ -844,9 +858,18 @@ async def layer_data(
                 overlay_provenance = {
                     "provider": "OpenSky Network",
                     "endpoint": adapter.endpoint,
+                    "request_endpoint": getattr(adapter, "request_endpoint", adapter.endpoint),
                     "classification": "OBSERVATION",
+                    "semantics": "current aircraft state vectors; not hazards or events",
+                    "cache_fetched_at": getattr(adapter, "cache_fetched_at", None).isoformat() if isinstance(getattr(adapter, "cache_fetched_at", None), datetime) else None,
+                    "cache_age_seconds": getattr(adapter, "cache_age_seconds", None),
+                    "refresh_seconds": getattr(adapter, "refresh_seconds", None),
+                    "stale_after_seconds": getattr(adapter, "max_stale_seconds", None),
+                    "rate_limit_cooldown_seconds": getattr(adapter, "rate_limit_cooldown_seconds", None),
+                    "lifecycle_status": getattr(adapter, "status", "UNAVAILABLE"),
+                    "last_error": str(exc),
                 }
-                item.status = "DEGRADED"
+                item.status = getattr(adapter, "status", "UNAVAILABLE")
                 item.error = str(exc)
                 if hasattr(adapter, "key"):
                     source = await ensure_source(session, adapter)  # type: ignore[arg-type]

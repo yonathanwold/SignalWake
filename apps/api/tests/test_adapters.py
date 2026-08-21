@@ -411,3 +411,74 @@ async def test_opensky_fetch_is_bounded_and_surfaces_429_without_last_known_good
             await adapter.fetch(client)
     assert request_params == {"lamin": "24", "lomin": "-125", "lamax": "50", "lomax": "-66"}
     assert adapter.last_http_status == 429
+
+
+def test_opensky_rejects_nonfinite_and_out_of_range_coordinates():
+    adapter = OpenSkyAdapter("https://example.test/states/all", "signalwake-test")
+    for longitude, latitude in ((float("nan"), 38.85), (float("inf"), 38.85), (-181, 38.85), (-77.03, 91)):
+        state = _opensky_state()
+        state[5], state[6] = longitude, latitude
+        with pytest.raises(AdapterError, match="identity or coordinates"):
+            adapter.to_feature(state)
+
+
+@pytest.mark.asyncio
+async def test_opensky_429_honors_retry_header_and_reuses_last_known_good():
+    adapter = OpenSkyAdapter("https://example.test/states/all", "signalwake-test", max_stale_seconds=3600)
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json={"states": [_opensky_state()]})
+        return httpx.Response(429, headers={"X-Rate-Limit-Retry-After-Seconds": "120"}, text="rate limited")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        first = await adapter.fetch(client)
+        adapter._cache_fetched_at = datetime.now(timezone.utc) - timedelta(seconds=1300)
+        second = await adapter.fetch(client)
+        third = await adapter.fetch(client)
+    assert len(first) == len(second) == len(third) == 1
+    assert calls == 2
+    assert adapter.rate_limit_retry_after_seconds == 120
+    assert (adapter.rate_limit_cooldown_seconds or 0) > 0
+    assert adapter.status == "DEGRADED"
+
+
+@pytest.mark.asyncio
+async def test_opensky_429_cold_start_enters_cooldown_without_retry_loop():
+    adapter = OpenSkyAdapter("https://example.test/states/all", "signalwake-test")
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"Retry-After": "60"}, text="rate limited")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(AdapterError, match="429"):
+            await adapter.fetch(client)
+        with pytest.raises(AdapterError, match="cooldown"):
+            await adapter.fetch(client)
+    assert calls == 1
+    assert adapter.status == "UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_opensky_hides_last_known_good_after_maximum_stale_age():
+    adapter = OpenSkyAdapter("https://example.test/states/all", "signalwake-test", max_stale_seconds=1800)
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json={"states": [_opensky_state()]})
+        return httpx.Response(429, headers={"Retry-After": "60"}, text="rate limited")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        assert len(await adapter.fetch(client)) == 1
+        adapter._cache_fetched_at = datetime.now(timezone.utc) - timedelta(seconds=2000)
+        assert await adapter.fetch(client) == []
+    assert adapter.status == "UNAVAILABLE"

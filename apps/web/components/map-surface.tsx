@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { CanonicalEvent, InfrastructureAsset, LayerCatalogItem, MapLayerData, RainViewerMetadata } from "../lib/types";
+import type { AircraftObservation, CanonicalEvent, InfrastructureAsset, LayerCatalogItem, MapLayerData, RainViewerMetadata } from "../lib/types";
 import { AlertIcon, ChevronIcon, MapIcon, QuakeIcon } from "./icons";
 import { SeverityDot } from "./status-pill";
 
@@ -16,6 +16,7 @@ type MapSurfaceProps = {
   selectedInfrastructure: InfrastructureAsset | null;
   onSelectEvent: (event: CanonicalEvent) => void;
   onSelectInfrastructure: (asset: InfrastructureAsset) => void;
+  onSelectAircraft?: (aircraft: AircraftObservation) => void;
 };
 
 const INITIAL_CENTER: [number, number] = [-98.5795, 39.8283];
@@ -91,6 +92,7 @@ type MapFeature = {
 };
 type MapCollection = { type: "FeatureCollection"; features: MapFeature[] };
 type MapFeatureLike = {
+  id?: string | number;
   properties?: Record<string, unknown>;
   geometry?: MapGeometry;
 };
@@ -181,7 +183,7 @@ function overlayCollection(overlays: Record<string, MapLayerData>, key: string):
       return [{
         type: "Feature" as const,
         id: feature.id,
-        properties: { ...feature.properties, source: key, title: String(feature.properties?.name ?? feature.properties?.model ?? feature.properties?.callsign ?? feature.properties?.icao24 ?? key), classification: feature.properties?.classification ?? (key === "open_meteo" ? "MODEL_FIELD" : key === "opensky" ? "OBSERVATION" : "REFERENCE") },
+        properties: { ...feature.properties, source: key, overlay_status: body.status, cache_age_seconds: body.provenance.cache_age_seconds ?? null, title: String(feature.properties?.name ?? feature.properties?.model ?? feature.properties?.callsign ?? feature.properties?.icao24 ?? key), classification: feature.properties?.classification ?? (key === "open_meteo" ? "MODEL_FIELD" : key === "opensky" ? "OBSERVATION" : "REFERENCE") },
         geometry: feature.geometry,
       }];
     }),
@@ -220,13 +222,14 @@ function mapStyle(events: CanonicalEvent[], infrastructure: InfrastructureAsset[
     "event-points": { type: "geojson", data: eventPointCollection(mapEvents), cluster: true, clusterRadius: 42, clusterMaxZoom: 5 },
     infrastructure: { type: "geojson", data: infrastructureCollection(infrastructure) },
     "open-meteo": { type: "geojson", data: overlayCollection(overlays, "open_meteo") },
-    opensky: { type: "geojson", data: overlayCollection(overlays, "opensky"), cluster: true, clusterRadius: 34, clusterMaxZoom: 7 },
+    opensky: { type: "geojson", data: overlayCollection(overlays, "opensky"), cluster: true, clusterRadius: 64, clusterMaxZoom: 8 },
     nppes: { type: "geojson", data: overlayCollection(overlays, "nppes") },
     census: { type: "geojson", data: overlayCollection(overlays, "census") },
   };
   const overlayLayers: unknown[] = [
-    { id: "opensky-clusters", type: "circle", source: "opensky", filter: ["has", "point_count"], paint: { "circle-radius": ["step", ["get", "point_count"], 12, 25, 16, 100, 21], "circle-color": "#06131d", "circle-stroke-color": "#17c993", "circle-stroke-width": 1.7, "circle-opacity": 0.92 } },
-    { id: "opensky-points", type: "circle", source: "opensky", filter: ["!", ["has", "point_count"]], paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 2.5, 5, 3.5, 9, 5], "circle-color": "#17c993", "circle-opacity": 0.78, "circle-stroke-color": "#b8ffe8", "circle-stroke-width": 0.7 } },
+    { id: "opensky-clusters", type: "circle", source: "opensky", filter: ["has", "point_count"], paint: { "circle-radius": ["step", ["get", "point_count"], 9, 25, 12, 100, 15, 500, 18], "circle-color": "#071b27", "circle-stroke-color": "#17c993", "circle-stroke-width": 1.3, "circle-opacity": 0.9 } },
+    { id: "opensky-cluster-count", type: "symbol", source: "opensky", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-font": ["Open Sans Regular"], "text-size": ["interpolate", ["linear"], ["zoom"], 2, 8, 6, 10, 9, 11], "text-allow-overlap": true }, paint: { "text-color": "#dbe7f1", "text-halo-color": "#06111a", "text-halo-width": 1.2 } },
+    { id: "opensky-points", type: "circle", source: "opensky", filter: ["!", ["has", "point_count"]], paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 1.2, 5, 1.8, 8, 2.8, 11, 4.5], "circle-color": "#17c993", "circle-opacity": ["interpolate", ["linear"], ["zoom"], 2, 0.35, 5, 0.48, 8, 0.7], "circle-stroke-color": "#b8ffe8", "circle-stroke-width": 0.45 } },
     { id: "census-state-fill", type: "fill", source: "census", filter: ["any", ["==", ["geometry-type"], "Polygon"], ["==", ["geometry-type"], "MultiPolygon"]], paint: { "fill-color": "#8b5cf6", "fill-opacity": 0.035 } },
     { id: "census-state-outline", type: "line", source: "census", filter: ["any", ["==", ["geometry-type"], "Polygon"], ["==", ["geometry-type"], "MultiPolygon"]], paint: { "line-color": "#8b5cf6", "line-width": 0.8, "line-opacity": 0.38 } },
     { id: "open-meteo-field-halo", type: "circle", source: "open-meteo", paint: { "circle-radius": 18, "circle-color": "#38bdf8", "circle-opacity": 0.12, "circle-stroke-color": "#38bdf8", "circle-stroke-width": 1 } },
@@ -280,13 +283,50 @@ function pointCoordinatesLabel(geometry: MapGeometry | undefined) {
   return `${latitude.toFixed(5)}° ${latitude >= 0 ? "N" : "S"} · ${Math.abs(longitude).toFixed(5)}° ${longitude >= 0 ? "E" : "W"}`;
 }
 
+function aircraftFromFeature(feature: MapFeatureLike | undefined): AircraftObservation | null {
+  const properties = feature?.properties;
+  const coordinates = feature?.geometry?.type === "Point" && Array.isArray(feature.geometry.coordinates) ? feature.geometry.coordinates : null;
+  if (!properties || !coordinates || typeof coordinates[0] !== "number" || typeof coordinates[1] !== "number") return null;
+  const icao24 = String(properties.icao24 ?? feature?.id ?? "").trim().toLowerCase();
+  if (!icao24) return null;
+  return {
+    id: String(feature?.id ?? icao24),
+    icao24,
+    callsign: typeof properties.callsign === "string" ? properties.callsign.trim() || null : null,
+    origin_country: typeof properties.origin_country === "string" ? properties.origin_country : null,
+    observed_at: typeof properties.observed_at === "string" ? properties.observed_at : null,
+    time_position: typeof properties.time_position === "string" ? properties.time_position : null,
+    last_contact: typeof properties.last_contact === "string" ? properties.last_contact : null,
+    longitude: coordinates[0],
+    latitude: coordinates[1],
+    classification: typeof properties.classification === "string" ? properties.classification : "OBSERVATION",
+    source: typeof properties.source === "string" ? properties.source : "opensky",
+    cache_age_seconds: typeof properties.cache_age_seconds === "number" ? properties.cache_age_seconds : null,
+    overlay_status: typeof properties.overlay_status === "string" ? properties.overlay_status : undefined,
+  };
+}
+
+function ageLabel(seconds: number | null | undefined) {
+  if (seconds == null || !Number.isFinite(seconds)) return "AGE UNKNOWN";
+  if (seconds < 60) return `${Math.max(0, Math.round(seconds))}S`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}M`;
+  return `${Math.round(seconds / 3600)}H`;
+}
+
+function observedLabel(value: unknown) {
+  if (typeof value !== "string") return "OBSERVED TIME UNKNOWN";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "OBSERVED TIME UNKNOWN";
+  return `OBSERVED ${new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(date)}Z`;
+}
+
 function centerLabel(view: MapViewState) {
   const latitudeHemisphere = view.latitude >= 0 ? "N" : "S";
   const longitudeHemisphere = view.longitude >= 0 ? "E" : "W";
   return `${Math.abs(view.latitude).toFixed(5)}°${latitudeHemisphere} / ${Math.abs(view.longitude).toFixed(5)}°${longitudeHemisphere}`;
 }
 
-export function MapSurface({ events, infrastructure, layers = [], overlays = {}, radar = null, windowLabel = "PAST 48H / UTC", selectedEvent, selectedInfrastructure, onSelectEvent, onSelectInfrastructure }: MapSurfaceProps) {
+export function MapSurface({ events, infrastructure, layers = [], overlays = {}, radar = null, windowLabel = "PAST 48H / UTC", selectedEvent, selectedInfrastructure, onSelectEvent, onSelectInfrastructure, onSelectAircraft }: MapSurfaceProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("maplibre-gl").Map | null>(null);
   const eventsRef = useRef(events);
@@ -296,6 +336,7 @@ export function MapSurface({ events, infrastructure, layers = [], overlays = {},
   const radarRef = useRef(radar);
   const onSelectEventRef = useRef(onSelectEvent);
   const onSelectInfrastructureRef = useRef(onSelectInfrastructure);
+  const onSelectAircraftRef = useRef(onSelectAircraft);
   const [mapRuntime, setMapRuntime] = useState<"loading" | "ready" | "error">("loading");
   const [activeProviderIndex, setActiveProviderIndex] = useState(0);
   const providerIndexRef = useRef(0);
@@ -316,6 +357,7 @@ export function MapSurface({ events, infrastructure, layers = [], overlays = {},
   radarRef.current = radar;
   onSelectEventRef.current = onSelectEvent;
   onSelectInfrastructureRef.current = onSelectInfrastructure;
+  onSelectAircraftRef.current = onSelectAircraft;
 
   useEffect(() => {
     let disposed = false;
@@ -390,7 +432,14 @@ export function MapSurface({ events, infrastructure, layers = [], overlays = {},
           }
           const infrastructureId = feature?.properties?.infrastructureId;
           const asset = typeof infrastructureId === "string" ? infrastructureRef.current.find((item) => item.id === infrastructureId) : undefined;
-          if (asset) onSelectInfrastructureRef.current(asset);
+          if (asset) {
+            onSelectInfrastructureRef.current(asset);
+            return;
+          }
+          if (feature?.properties?.source === "opensky") {
+            const aircraft = aircraftFromFeature(feature);
+            if (aircraft) onSelectAircraftRef.current?.(aircraft);
+          }
         };
         const showFeatureTooltip = (feature: MapFeatureLike | undefined, point: { x: number; y: number }) => {
           if (!feature?.properties) return;
@@ -423,6 +472,7 @@ export function MapSurface({ events, infrastructure, layers = [], overlays = {},
           "nppes-provider-ring",
           "opensky-points",
           "opensky-clusters",
+          "opensky-cluster-count",
           "census-state-fill",
           "census-state-outline",
           ...dynamicSources.flatMap((source) => { const safeSource = source.replace(/[^a-z0-9_-]/gi, "-"); return [`event-${safeSource}-polygons`, `event-${safeSource}-polygon-outline`, `event-${safeSource}-point-halo`, `event-${safeSource}-point-ring`, `event-${safeSource}-points`, `event-${safeSource}-point-core`]; }),
@@ -466,6 +516,13 @@ export function MapSurface({ events, infrastructure, layers = [], overlays = {},
           });
         });
         map.on("click", "opensky-clusters", (event) => {
+          const feature = event.features?.[0] as { properties?: Record<string, unknown> } | undefined;
+          const clusterId = feature?.properties?.cluster_id;
+          if (typeof clusterId !== "number") return;
+          const source = map.getSource("opensky") as unknown as { getClusterExpansionZoom?: (id: number, callback: (error: Error | null, zoom: number) => void) => void };
+          source.getClusterExpansionZoom?.(clusterId, (error, zoom) => { if (!error) map.easeTo({ center: event.lngLat, zoom }); });
+        });
+        map.on("click", "opensky-cluster-count", (event) => {
           const feature = event.features?.[0] as { properties?: Record<string, unknown> } | undefined;
           const clusterId = feature?.properties?.cluster_id;
           if (typeof clusterId !== "number") return;
@@ -543,7 +600,7 @@ export function MapSurface({ events, infrastructure, layers = [], overlays = {},
     const showCensus = !hiddenLayers.census;
     const showRadar = !hiddenLayers.rainviewer;
     const showOpenSky = !hiddenLayers.opensky;
-    ["opensky-points", "opensky-clusters"].forEach((layer) => { if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", visibility(showOpenSky)); });
+    ["opensky-points", "opensky-clusters", "opensky-cluster-count"].forEach((layer) => { if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", visibility(showOpenSky)); });
     ["open-meteo-field-halo", "open-meteo-field-core"].forEach((layer) => { if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", visibility(showModel)); });
     if (map.getLayer("nppes-provider-ring")) map.setLayoutProperty("nppes-provider-ring", "visibility", visibility(showProviders));
     ["census-state-fill", "census-state-outline"].forEach((layer) => { if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", visibility(showCensus)); });
@@ -569,7 +626,10 @@ export function MapSurface({ events, infrastructure, layers = [], overlays = {},
     return (item.counts.accepted ?? 0) > 0 || events.some((event) => event.source_key === item.source_key);
   });
   const activeSources = activeSourceKeys(layers);
-  const overlayCounts = { opensky: overlays.opensky?.map_addressable_count ?? overlays.opensky?.feature_count ?? 0, open_meteo: overlays.open_meteo?.feature_count ?? 0, nppes: overlays.nppes?.feature_count ?? 0, census: overlays.census?.feature_count ?? 0 };
+  const aircraftOverlay = overlays.opensky;
+  const aircraftStatus = aircraftOverlay?.status ?? "UNAVAILABLE";
+  const aircraftAge = typeof aircraftOverlay?.provenance.cache_age_seconds === "number" ? aircraftOverlay.provenance.cache_age_seconds : null;
+  const overlayCounts = { opensky: aircraftOverlay?.map_addressable_count ?? aircraftOverlay?.feature_count ?? 0, open_meteo: overlays.open_meteo?.feature_count ?? 0, nppes: overlays.nppes?.feature_count ?? 0, census: overlays.census?.feature_count ?? 0 };
 
   const handleMapKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     const selectable = [
@@ -593,13 +653,14 @@ export function MapSurface({ events, infrastructure, layers = [], overlays = {},
       {mapTooltip && <div className="map-feature-tooltip" style={{ left: mapTooltip.x, top: mapTooltip.y }} aria-live="polite"><strong>{mapTooltip.title}</strong><span>{mapTooltip.source} · {mapTooltip.classification}</span><small>{mapTooltip.coordinates}</small></div>}
       {mapRuntime === "ready" && <div className="maplibre-zoom-controls" aria-label="Map controls"><button type="button" onClick={() => mapRef.current?.zoomIn()} aria-label="Zoom in">+</button><button type="button" onClick={() => mapRef.current?.zoomOut()} aria-label="Zoom out">−</button><button type="button" onClick={() => mapRef.current?.flyTo({ center: INITIAL_CENTER, zoom: INITIAL_ZOOM })} aria-label="Reset map view">⌾</button></div>}
       <div className={`map-runtime-note map-runtime-note-${mapRuntime}`} role={mapRuntime === "error" ? "status" : undefined}><span className={`fallback-dot fallback-dot-${mapRuntime}`} /><span>{mapRuntime === "ready" ? `MAP RUNTIME / ${BASEMAP_PROVIDERS[activeProviderIndex].label}` : mapRuntime === "error" ? "BASEMAP UNAVAILABLE" : `MAP RUNTIME / TRYING ${BASEMAP_PROVIDERS[activeProviderIndex].label}`}</span><span className="fallback-detail">{mapRuntime === "ready" ? `${BASEMAP_PROVIDERS[activeProviderIndex].label} · source geometry preserved` : mapRuntime === "error" ? "All real basemap providers failed; no synthetic geographic fallback is shown" : `Fetching ${BASEMAP_PROVIDERS[activeProviderIndex].label} tiles`}</span></div>
+      {aircraftOverlay && aircraftStatus !== "LIVE" && <div className="map-stale-banner" role="status"><span className="severity-dot severity-advisory" /><strong>AIRCRAFT STATES · {aircraftStatus}</strong><span>{aircraftOverlay.error ?? "Last-known-good state vectors are being held"} · CACHE {ageLabel(aircraftAge)}</span></div>}
       <div className={`map-layer-rail ${railCollapsed ? "map-layer-rail-collapsed" : ""}`}>
         <button className="layer-rail-toggle" type="button" onClick={() => setRailCollapsed((value) => !value)} aria-expanded={!railCollapsed} aria-label={railCollapsed ? "Expand live map layers" : "Collapse live map layers"}><ChevronIcon size={13} /><span>{railCollapsed ? "LAYERS" : "HIDE LAYERS"}</span></button>
-        {!railCollapsed && <div className="layer-rail-body"><div className="rail-label">LIVE EVENT DATA</div>{activeSources.has("nws") && <button className={`layer-control ${showNws ? "layer-active" : ""}`} type="button" onClick={() => setShowNws((value) => !value)} aria-pressed={showNws}><span className="layer-swatch layer-swatch-alert" /><span>NWS ALERTS</span><strong>{events.filter((event) => event.source_key === "nws").length.toString().padStart(2, "0")}</strong></button>}{activeSources.has("usgs") && <button className={`layer-control ${showUsgs ? "layer-active" : ""}`} type="button" onClick={() => setShowUsgs((value) => !value)} aria-pressed={showUsgs}><span className="layer-swatch layer-swatch-quake" /><span>USGS QUAKES</span><strong>{events.filter((event) => event.source_key === "usgs").length.toString().padStart(2, "0")}</strong></button>}{activeLayers.filter((item) => item.source_key !== "nws" && item.source_key !== "usgs").map((item) => { const source = item.source_key as string; const hasData = events.some((event) => event.source_key === source); const canToggle = hasData && ["LIVE", "NEAR_REAL_TIME", "DEGRADED"].includes(item.status); const count = item.counts.accepted ?? events.filter((event) => event.source_key === source).length; const pointStyle = SOURCE_POINT_STYLES[source]; return <button key={item.key} className={`layer-control ${!hiddenLayers[item.key] ? "layer-active" : ""}`} type="button" disabled={!canToggle} onClick={() => setHiddenLayers((current) => ({ ...current, [item.key]: !current[item.key] }))} aria-pressed={!hiddenLayers[item.key]}><span className="layer-swatch layer-swatch-source" style={{ background: pointStyle?.color ?? "#22c7a8" }} /><span>{item.name.toUpperCase()}</span><strong>{count.toString().padStart(2, "0")}</strong></button>; })}{overlayCounts.opensky > 0 && <button className={`layer-control ${!hiddenLayers.opensky ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, opensky: !current.opensky }))} aria-pressed={!hiddenLayers.opensky}><span className="layer-swatch" style={{ background: "#17c993" }} /><span>AIRCRAFT STATES</span><strong>{overlayCounts.opensky.toLocaleString()}</strong></button>}<div className="rail-label">MODEL AND REFERENCE OVERLAYS</div>{overlayCounts.open_meteo > 0 && <button className={`layer-control ${!hiddenLayers.open_meteo ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, open_meteo: !current.open_meteo }))} aria-pressed={!hiddenLayers.open_meteo}><span className="layer-swatch" style={{ background: "#38bdf8" }} /><span>OPEN-METEO MODEL</span><strong>{overlayCounts.open_meteo.toString().padStart(2, "0")}</strong></button>}{overlayCounts.nppes > 0 && <button className={`layer-control ${!hiddenLayers.nppes ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, nppes: !current.nppes }))} aria-pressed={!hiddenLayers.nppes}><span className="layer-swatch" style={{ background: "#a986f5" }} /><span>NPPES PROVIDERS</span><strong>{overlayCounts.nppes.toString().padStart(2, "0")}</strong></button>}{overlayCounts.census > 0 && <button className={`layer-control ${!hiddenLayers.census ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, census: !current.census }))} aria-pressed={!hiddenLayers.census}><span className="layer-swatch" style={{ background: "#8b5cf6" }} /><span>CENSUS STATES</span><strong>{overlayCounts.census.toString().padStart(2, "0")}</strong></button>}{radar?.tile_url_template && <button className={`layer-control ${!hiddenLayers.rainviewer ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, rainviewer: !current.rainviewer }))} aria-pressed={!hiddenLayers.rainviewer}><span className="layer-swatch" style={{ background: "#22c7a8" }} /><span>RAINVIEWER RADAR</span><strong>RADAR</strong></button>}<div className="rail-label rail-label-reference">INFRASTRUCTURE REFERENCE DATA</div><button className={`layer-control ${showPorts ? "layer-active" : ""}`} type="button" onClick={() => setShowPorts((value) => !value)} aria-pressed={showPorts}><span className="layer-swatch layer-swatch-port" /><span>PORT FACILITIES</span><strong>{infrastructure.filter((asset) => asset.type === "port").length.toString().padStart(2, "0")}</strong></button><button className={`layer-control ${showRail ? "layer-active" : ""}`} type="button" onClick={() => setShowRail((value) => !value)} aria-pressed={showRail}><span className="layer-swatch layer-swatch-rail" /><span>RAIL CORRIDORS</span><strong>{infrastructure.filter((asset) => asset.type === "rail_corridor").length.toString().padStart(2, "0")}</strong></button></div>}
+        {!railCollapsed && <div className="layer-rail-body"><div className="rail-label">LIVE EVENT DATA</div>{activeSources.has("nws") && <button className={`layer-control ${showNws ? "layer-active" : ""}`} type="button" onClick={() => setShowNws((value) => !value)} aria-pressed={showNws}><span className="layer-swatch layer-swatch-alert" /><span>NWS ALERTS</span><strong>{events.filter((event) => event.source_key === "nws").length.toString().padStart(2, "0")}</strong></button>}{activeSources.has("usgs") && <button className={`layer-control ${showUsgs ? "layer-active" : ""}`} type="button" onClick={() => setShowUsgs((value) => !value)} aria-pressed={showUsgs}><span className="layer-swatch layer-swatch-quake" /><span>USGS QUAKES</span><strong>{events.filter((event) => event.source_key === "usgs").length.toString().padStart(2, "0")}</strong></button>}{activeLayers.filter((item) => item.source_key !== "nws" && item.source_key !== "usgs").map((item) => { const source = item.source_key as string; const hasData = events.some((event) => event.source_key === source); const canToggle = hasData && ["LIVE", "NEAR_REAL_TIME", "DEGRADED"].includes(item.status); const count = item.counts.accepted ?? events.filter((event) => event.source_key === source).length; const pointStyle = SOURCE_POINT_STYLES[source]; return <button key={item.key} className={`layer-control ${!hiddenLayers[item.key] ? "layer-active" : ""}`} type="button" disabled={!canToggle} onClick={() => setHiddenLayers((current) => ({ ...current, [item.key]: !current[item.key] }))} aria-pressed={!hiddenLayers[item.key]}><span className="layer-swatch layer-swatch-source" style={{ background: pointStyle?.color ?? "#22c7a8" }} /><span>{item.name.toUpperCase()}</span><strong>{count.toString().padStart(2, "0")}</strong></button>; })}{aircraftOverlay && (overlayCounts.opensky > 0 || aircraftStatus !== "LIVE") && <button className={`layer-control ${!hiddenLayers.opensky ? "layer-active" : ""}`} type="button" disabled={aircraftStatus === "UNAVAILABLE"} onClick={() => setHiddenLayers((current) => ({ ...current, opensky: !current.opensky }))} aria-pressed={!hiddenLayers.opensky}><span className="layer-swatch" style={{ background: aircraftStatus === "LIVE" ? "#17c993" : "#eaa519" }} /><span>AIRCRAFT STATES <small className={`layer-status layer-status-${aircraftStatus.toLowerCase()}`}>{aircraftStatus} · {ageLabel(aircraftAge)}</small></span><strong>{overlayCounts.opensky.toLocaleString()}</strong></button>}<div className="rail-label">MODEL AND REFERENCE OVERLAYS</div>{overlayCounts.open_meteo > 0 && <button className={`layer-control ${!hiddenLayers.open_meteo ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, open_meteo: !current.open_meteo }))} aria-pressed={!hiddenLayers.open_meteo}><span className="layer-swatch" style={{ background: "#38bdf8" }} /><span>OPEN-METEO MODEL</span><strong>{overlayCounts.open_meteo.toString().padStart(2, "0")}</strong></button>}{overlayCounts.nppes > 0 && <button className={`layer-control ${!hiddenLayers.nppes ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, nppes: !current.nppes }))} aria-pressed={!hiddenLayers.nppes}><span className="layer-swatch" style={{ background: "#a986f5" }} /><span>NPPES PROVIDERS</span><strong>{overlayCounts.nppes.toString().padStart(2, "0")}</strong></button>}{overlayCounts.census > 0 && <button className={`layer-control ${!hiddenLayers.census ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, census: !current.census }))} aria-pressed={!hiddenLayers.census}><span className="layer-swatch" style={{ background: "#8b5cf6" }} /><span>CENSUS STATES</span><strong>{overlayCounts.census.toString().padStart(2, "0")}</strong></button>}{radar?.tile_url_template && <button className={`layer-control ${!hiddenLayers.rainviewer ? "layer-active" : ""}`} type="button" onClick={() => setHiddenLayers((current) => ({ ...current, rainviewer: !current.rainviewer }))} aria-pressed={!hiddenLayers.rainviewer}><span className="layer-swatch" style={{ background: "#22c7a8" }} /><span>RAINVIEWER RADAR</span><strong>RADAR</strong></button>}<div className="rail-label rail-label-reference">INFRASTRUCTURE REFERENCE DATA</div><button className={`layer-control ${showPorts ? "layer-active" : ""}`} type="button" onClick={() => setShowPorts((value) => !value)} aria-pressed={showPorts}><span className="layer-swatch layer-swatch-port" /><span>PORT FACILITIES</span><strong>{infrastructure.filter((asset) => asset.type === "port").length.toString().padStart(2, "0")}</strong></button><button className={`layer-control ${showRail ? "layer-active" : ""}`} type="button" onClick={() => setShowRail((value) => !value)} aria-pressed={showRail}><span className="layer-swatch layer-swatch-rail" /><span>RAIL CORRIDORS</span><strong>{infrastructure.filter((asset) => asset.type === "rail_corridor").length.toString().padStart(2, "0")}</strong></button></div>}
       </div>
       <div className="map-legend"><span><span className="legend-dot legend-warning" /> WARNING</span><span><span className="legend-dot legend-advisory" /> ADVISORY</span><span><span className="legend-dot legend-info" /> INFO</span>{overlayCounts.opensky > 0 && <span><span className="legend-ring" style={{ borderColor: "#17c993" }} /> AIRCRAFT · OBSERVATION</span>}{activeLayers.filter((item) => item.source_key && item.source_key !== "nws" && item.source_key !== "usgs").slice(0, 4).map((item) => { const style = SOURCE_POINT_STYLES[item.source_key as string]; return <span key={item.key}><span className="legend-ring" style={{ borderColor: style?.color ?? "#22c7a8" }} /> {item.name.toUpperCase()}</span>; })}{overlayCounts.open_meteo > 0 && <span><span className="legend-ring" style={{ borderColor: "#38bdf8" }} /> MODEL FIELD</span>}{radar?.tile_url_template && <span><span className="legend-ring" style={{ borderColor: "#22c7a8" }} /> RADAR · {radar.timestamp?.slice(11, 16) ?? "LIVE"}Z</span>}</div>
       <div className="map-scale"><span>0</span><span className="scale-line" /><span>500 km</span></div>
     </div>
-    <div className="map-foot"><span><span className="foot-icon"><AlertIcon size={14} /></span> WEATHER OVERLAYS</span><span><span className="foot-icon"><QuakeIcon size={14} /></span> SEISMIC OBSERVATIONS</span>{overlayCounts.opensky > 0 && <span><span className="foot-icon"><span className="severity-dot severity-info" /></span> AIRCRAFT STATES</span>}<span className="map-foot-note"><SeverityDot severity="info" /> Reference assets and aircraft states are source-provided · no impact assessment is implied</span></div>
+    <div className="map-foot"><span><span className="foot-icon"><AlertIcon size={14} /></span> WEATHER OVERLAYS</span><span><span className="foot-icon"><QuakeIcon size={14} /></span> SEISMIC OBSERVATIONS</span>{aircraftOverlay && <span className={`map-aircraft-freshness map-aircraft-freshness-${aircraftStatus.toLowerCase()}`}><span className="foot-icon"><span className="severity-dot severity-info" /></span> AIRCRAFT {aircraftStatus} · {observedLabel(aircraftOverlay.provenance.observed_at)} · CACHE {ageLabel(aircraftAge)}</span>}<span className="map-foot-note"><SeverityDot severity="info" /> Reference assets and aircraft states are source-provided · no impact assessment is implied</span></div>
   </section>;
 }

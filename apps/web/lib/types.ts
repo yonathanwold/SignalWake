@@ -100,6 +100,22 @@ export type MapLayerData = {
   error: string | null;
 };
 
+export type AircraftObservation = {
+  id: string;
+  icao24: string;
+  callsign: string | null;
+  origin_country: string | null;
+  observed_at: string | null;
+  time_position: string | null;
+  last_contact: string | null;
+  longitude: number;
+  latitude: number;
+  classification: string;
+  source: string;
+  cache_age_seconds?: number | null;
+  overlay_status?: string;
+};
+
 export type RainViewerMetadata = {
   key: "rainviewer";
   status: string;
