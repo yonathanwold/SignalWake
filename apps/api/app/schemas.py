@@ -152,6 +152,9 @@ class LayerDataResponse(BaseModel):
     geometry_kind: str
     feature_count: int
     bounded_limit: int
+    map_addressable_count: int | None = None
+    category_counts: dict[str, int] = Field(default_factory=dict)
+    truncated: bool = False
     features: list[dict[str, Any]] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None

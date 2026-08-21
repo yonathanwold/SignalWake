@@ -120,9 +120,10 @@ export async function fetchEvents(): Promise<{ events: CanonicalEvent[]; sources
       // keeps the derived panel empty and labeled when this endpoint is down.
     }
     const overlays: Record<string, MapLayerData> = {};
-    for (const key of ["open_meteo", "nppes", "census"]) {
+    for (const key of ["opensky", "open_meteo", "nppes", "census"]) {
       try {
-        const response = await fetch(`${base}/layers/${key}/data?limit=200`, { cache: "no-store", signal: AbortSignal.timeout(2600) });
+        const requestedLimit = key === "opensky" ? 8000 : 200;
+        const response = await fetch(`${base}/layers/${key}/data?limit=${requestedLimit}`, { cache: "no-store", signal: AbortSignal.timeout(key === "opensky" ? 12000 : 2600) });
         if (response.ok) overlays[key] = (await response.json()) as MapLayerData;
       } catch {
         // Optional overlay failures must not hide the operational event feed.

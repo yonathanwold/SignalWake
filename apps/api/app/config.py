@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     aviation_weather_bbox: str = ""
     aviation_weather_age_hours: int = 48
     aviation_weather_limit: int = 400
+    opensky_url: str = "https://opensky-network.org/api/states/all"
+    opensky_bbox: str = "24,-125,50,-66"
+    opensky_limit: int = 8000
+    opensky_refresh_seconds: int = 90
     fema_declarations_url: str = "https://gis.fema.gov/arcgis/rest/services/FEMA/DECS_ALL/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
     fema_declarations_limit: int = 2000
     road511_url: str = "https://api.road511.com/api/v1/events"
@@ -93,6 +97,10 @@ class Settings(BaseSettings):
             raise ValueError("AVIATION_WEATHER_AGE_HOURS must be between 1 and 48")
         if self.aviation_weather_limit < 1 or self.aviation_weather_limit > 400:
             raise ValueError("AVIATION_WEATHER_LIMIT must be between 1 and 400")
+        if self.opensky_limit < 1 or self.opensky_limit > 10000:
+            raise ValueError("OPENSKY_LIMIT must be between 1 and 10000")
+        if self.opensky_refresh_seconds < 15 or self.opensky_refresh_seconds > 900:
+            raise ValueError("OPENSKY_REFRESH_SECONDS must be between 15 and 900")
         if self.fema_declarations_limit < 1 or self.fema_declarations_limit > 2000:
             raise ValueError("FEMA_DECLARATIONS_LIMIT must be between 1 and 2000")
         if self.road511_limit < 1 or self.road511_limit > 500:

@@ -1,5 +1,5 @@
 :root {
-  --bg: #080b12; --panel: #0e1520; --panel-raised: #121c29; --panel-deep: #091019; --line: #1c2a39; --line-strong: #2b3e51; --text: #dbe5ef; --muted: #7f91a6; --faint: #4d5d70; --blue: #4b8fff; --teal: #22c7a8; --amber: #f1ad38; --red: #ed6868; --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace; --sans: "Inter", "Segoe UI", Arial, sans-serif;
+  --bg: #06111a; --panel: #081823; --panel-raised: #0b1c28; --panel-deep: #07151f; --line: #20394a; --line-strong: #2f4d62; --text: #dbe7f1; --muted: #90a4b5; --faint: #607789; --blue: #1688ff; --teal: #17c993; --amber: #eaa519; --red: #f1443c; --violet: #9065cf; --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace; --sans: "Inter", "Segoe UI", Arial, sans-serif;
 }
 * { box-sizing: border-box; }
 html, body { min-height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
@@ -395,6 +395,59 @@ a { color: inherit; }
   .replay-compare-controls button { width: 100%; }
 }
 
+/* SIGNALWAKE V2 command surface and visual contract. */
+.app-shell, .topbar, .side-nav, .main-content { background: var(--bg); }
+.topbar { height: 58px; padding-inline: 20px; border-color: var(--line); background: rgba(6,17,26,.98); }
+.brand { color: var(--text); }
+.brand-accent, .signal-mark, .section-eyebrow, .route-label { color: var(--blue); }
+.side-nav { width: 216px; background: #071620; border-color: var(--line); padding-top: 18px; }
+.nav-item { border-radius: 3px; }
+.nav-item-active { background: #0b2230; border-color: #2b526b; }
+.nav-item:hover { background: #0b1e2b; }
+.command-trigger { display: inline-flex; align-items: center; gap: 8px; min-height: 29px; padding: 0 9px; color: var(--muted); background: #081b27; border: 1px solid var(--line); border-radius: 3px; font: 9px var(--mono); letter-spacing: .07em; cursor: pointer; }
+.command-trigger:hover, .command-trigger:focus-visible { color: var(--text); border-color: var(--blue); outline: none; }
+.command-search-icon { color: var(--blue); font-size: 16px; line-height: 1; }
+.command-trigger kbd, .command-input-wrap kbd { color: var(--faint); font: 9px var(--mono); border: 1px solid var(--line-strong); padding: 2px 5px; border-radius: 2px; }
+.connection-live .connection-dot { background: var(--teal); }
+.connection-degraded .connection-dot { background: var(--amber); }
+.connection-checking .connection-dot { background: var(--faint); }
+.command-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: start center; padding-top: 84px; background: rgba(2,8,13,.72); }
+.command-palette { width: min(560px, calc(100vw - 28px)); overflow: hidden; border: 1px solid #36566b; border-radius: 4px; background: #081823; box-shadow: 0 18px 60px rgba(0,0,0,.45); }
+.command-input-wrap { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); color: var(--blue); }
+.command-input-wrap input { flex: 1; min-width: 0; color: var(--text); background: transparent; border: 0; outline: none; font-size: 14px; }
+.command-results { display: grid; gap: 2px; padding: 8px; }
+.command-result { display: flex; align-items: center; gap: 10px; padding: 11px 10px; color: var(--muted); border: 1px solid transparent; border-radius: 3px; }
+.command-result:hover, .command-result:focus-visible { color: var(--text); background: #0d2634; border-color: #2a4d62; outline: none; }
+.command-result svg { color: var(--blue); }
+.command-result-key { margin-left: auto; color: var(--faint); font: 9px var(--mono); }
+.command-empty { padding: 16px 10px; margin: 0; color: var(--muted); }
+.command-foot { display: flex; justify-content: space-between; padding: 9px 14px; border-top: 1px solid var(--line); color: var(--faint); font: 9px var(--mono); letter-spacing: .08em; }
+.map-section, .inspector, .feed-section, .graph-state, .scenario-state, .provenance-state, .health-overview, .health-section { border-color: var(--line); background: var(--panel); }
+.map-dashboard .map-layout { background: var(--panel-deep); }
+.map-toolbar, .map-foot, .map-summary, .source-strip { border-color: var(--line); background: #081823; }
+.map-canvas, .maplibre-canvas, .graph-canvas-wrap, .graph-svg, .scenario-snapshot-canvas { background: #06131d; }
+.map-layer-rail, .map-legend, .map-runtime-note { background: rgba(7,20,30,.94); border-color: #2d4a5d; }
+.layer-control:hover:not(:disabled), .layer-control.layer-active { background: #0c2533; }
+.layer-control strong { color: var(--text); }
+.map-summary { min-height: 58px; }
+.source-strip { min-height: 40px; }
+.inspector { background: #081823; }
+.inspector h2, .section-heading h1 { color: var(--text); }
+.button, .scenario-primary-button, .scenario-secondary-button, .replay-compare-controls button { border-radius: 3px; }
+.search-box, .select-label, .scenario-form-grid input, .scenario-form-grid textarea, .replay-compare-controls input { border-radius: 3px; background: #071722; border-color: var(--line); }
+.feed-row:hover, .feed-row-selected, .replay-event-row:hover, .replay-event-row-selected, .provenance-node:hover, .provenance-node-selected, .scenario-target-row:hover, .scenario-target-selected { background: #0b2533; }
+.classification { border-radius: 2px; }
+.classification-observation { color: var(--teal); border-color: rgba(23,201,147,.55); }
+.classification-model_field { color: var(--blue); border-color: rgba(22,136,255,.55); }
+.classification-degraded { color: var(--amber); border-color: rgba(234,165,25,.55); }
+.map-dashboard .map-section .map-canvas { min-height: 500px; }
+
+@media (max-width: 900px) {
+  .side-nav { background: #071620; }
+  .nav-item-active { background: #0b2230; }
+  .map-dashboard .map-section .map-canvas { min-height: 390px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.001ms !important; animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
 }
@@ -402,6 +455,39 @@ a { color: inherit; }
 /* Keep live-state indicators crisp, without halo or glow treatments. */
 .replay-state-ready, .state-pulse, .severity-critical { box-shadow: none; }
 .legend-ring { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border: 1.5px solid; border-radius: 50%; background: #09111b; vertical-align: -1px; }
+
+/* V2 palette guard: keep every workspace on the same navy/graphite surface
+   system even when older route-specific rules appear earlier in this file. */
+:root {
+  --bg: #06111a;
+  --panel: #081823;
+  --panel-raised: #0b1c28;
+  --panel-deep: #07151f;
+  --line: #20394a;
+  --line-strong: #2f4d62;
+  --text: #dbe7f1;
+  --muted: #90a4b5;
+  --faint: #607789;
+  --blue: #1688ff;
+  --teal: #17c993;
+  --amber: #eaa519;
+  --red: #f1443c;
+  --violet: #9065cf;
+}
+
+html, body, .app-shell { background: var(--bg); }
+.topbar { background: #07151f; }
+.side-nav { background: #081823; }
+.main-content { background: var(--bg); }
+.scenario-page, .graph-page, .replay-page, .provenance-page, .health-page { color: var(--text); }
+.scenario-builder, .scenario-panel, .scenario-result, .graph-toolbar, .graph-canvas-panel,
+.graph-sidebar, .graph-detail-card, .replay-controls, .replay-map-wrap, .replay-event-panel,
+.replay-compare, .provenance-stage, .provenance-detail-card, .health-overview, .health-section {
+  background: var(--panel);
+}
+.scenario-snapshot-canvas, .graph-canvas-wrap, .graph-svg { background: #06131d; }
+.scenario-snapshot, .graph-metrics div, .health-metric-card, .provenance-detail-fields div,
+.replay-change-grid article { background: var(--panel-raised); }
 
 .side-nav-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; margin-bottom: 10px; padding: 6px 11px; color: var(--faint); background: transparent; border: 1px solid var(--line); font: 9px var(--mono); letter-spacing: .1em; cursor: pointer; }
 .side-nav-toggle:hover, .side-nav-toggle:focus-visible { color: var(--text); border-color: var(--line-strong); }
@@ -445,4 +531,8 @@ a { color: inherit; }
   .map-dashboard .map-layout > .inspector { top: auto; left: 0; right: 0; bottom: 0; width: 100%; max-height: 64%; border-left: 0; border-top: 1px solid var(--line-strong); }
   .map-dashboard .map-layer-rail { width: 174px; }
   .map-dashboard .map-layer-rail-collapsed { width: 108px; }
+  .map-dashboard .map-toolbar { min-height: 48px; padding: 8px 10px; }
+  .map-dashboard .map-title { max-width: 68%; font-size: 9px; line-height: 1.25; }
+  .map-dashboard .map-title small, .map-dashboard .map-toolbar-right .map-coordinate { display: none; }
+  .map-dashboard .map-toolbar-right { gap: 6px; }
 }

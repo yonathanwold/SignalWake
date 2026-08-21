@@ -180,3 +180,33 @@ async def test_events_and_layers_accept_4000_but_reject_larger_limits(db_factory
     assert layer.status_code == 200
     assert layer.json()["bounded_limit"] == 4000
     assert too_many_layer.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_opensky_map_projection_has_separate_high_density_bound(db_factory, monkeypatch):
+    class FakeOpenSky:
+        endpoint = "https://opensky-network.org/api/states/all"
+        request_endpoint = "https://opensky-network.org/api/states/all?lamin=24&lomin=-125&lamax=50&lomax=-66"
+        status = "LIVE"
+        cache_age_seconds = 4
+        refresh_seconds = 90
+        last_error = None
+
+        async def fetch(self):
+            return [
+                {"type": "Feature", "id": f"abc{index}", "properties": {"classification": "OBSERVATION"}, "geometry": {"type": "Point", "coordinates": [-77.0, 38.8]}}
+                for index in range(4501)
+            ]
+
+    monkeypatch.setattr(main_module, "layer_adapters", lambda settings: {"opensky": FakeOpenSky()})
+    app.state.session_factory = db_factory
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/layers/opensky/data", params={"limit": 8000})
+        event_bound = await client.get("/layers/nasa_firms/data", params={"limit": 4001})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["feature_count"] == 4501
+    assert body["map_addressable_count"] == 4501
+    assert body["provenance"]["classification"] == "OBSERVATION"
+    assert event_bound.status_code == 422

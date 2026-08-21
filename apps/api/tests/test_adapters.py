@@ -20,6 +20,7 @@ from app.adapters.layer_sources import (
 )
 from app.adapters.nws import NWSAdapter
 from app.adapters.nws_observations import NWSObservationsAdapter
+from app.adapters.opensky import OpenSkyAdapter
 from app.adapters.road511 import Road511Adapter
 from app.adapters.usgs import USGSAdapter
 from app.adapters.usgs_water import USGSWaterAdapter
@@ -376,3 +377,37 @@ async def test_fema_bounds_request_and_preserves_current_designated_polygon():
     assert normalized.severity == "warning"
     assert normalized.observed_at == datetime(2026, 8, 18, 14, tzinfo=timezone.utc)
     assert normalized.geometry == feature["geometry"]
+
+
+def _opensky_state(icao24: str = "abc123") -> list[object]:
+    return [icao24, "TEST123 ", "United States", 1787061600, 1787061605, -77.03, 38.85, 9200.0, False, 210.5, 180.0, -1.2, None, 9180.0, None, None, 0, 2]
+
+
+@pytest.mark.asyncio
+async def test_opensky_normalizes_stable_identity_provider_time_and_observation_class():
+    adapter = OpenSkyAdapter("https://example.test/states/all", "signalwake-test")
+    feature = adapter.to_feature(_opensky_state())
+    normalized = adapter.normalize(feature)
+    assert normalized.source_event_id == "abc123"
+    assert normalized.event_type == "aircraft_observation"
+    assert normalized.severity == "info"
+    assert normalized.latitude == 38.85
+    assert normalized.longitude == -77.03
+    assert normalized.observed_at == datetime(2026, 8, 18, 14, 0, tzinfo=timezone.utc)
+    assert feature["properties"]["classification"] == "OBSERVATION"
+
+
+@pytest.mark.asyncio
+async def test_opensky_fetch_is_bounded_and_surfaces_429_without_last_known_good():
+    adapter = OpenSkyAdapter("https://example.test/states/all", "signalwake-test", refresh_seconds=15)
+    request_params: dict[str, str] = {}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        request_params.update({key: value for key, value in request.url.params.items()})
+        return httpx.Response(429, text="rate limited")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(AdapterError, match="429"):
+            await adapter.fetch(client)
+    assert request_params == {"lamin": "24", "lomin": "-125", "lamax": "50", "lomax": "-66"}
+    assert adapter.last_http_status == 429

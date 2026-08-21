@@ -78,6 +78,17 @@ converted into live events.
   capped 18-point grid, current variables, and at most 24 hours of past model
   context. These features are `MODEL_FIELD` map points with model timestamps;
   they are not persisted `/events` observations or predictions.
+- **OpenSky Network aircraft states** — a bounded CONUS `states/all` request
+  (`lamin=24,lomin=-125,lamax=50,lomax=-66`) returns current state vectors as
+  map-only `OBSERVATION` points. `icao24` is the stable identity; observed time
+  prefers `time_position`, then `last_contact`, then the fetch envelope. The
+  layer preserves provider fields such as callsign, altitude, velocity, track,
+  and on-ground state, and never infers severity, danger, delay, disruption, or
+  a hazard. Anonymous access is conservatively cached (90 seconds by default),
+  and refresh errors expose `DEGRADED` with last-known-good features when
+  available. The default projection cap is 8,000, separate from the 4,000
+  operational event cap. Official API documentation recommends OAuth; no
+  credentials are committed or required for local anonymous access.
 - **RainViewer** — public weather-map metadata is exposed at
   `/layers/rainviewer/metadata`, deriving one provider radar tile template and
   frame timestamp. The map renders this as a translucent raster overlay, never
@@ -140,12 +151,11 @@ The pass is idempotent by source-scoped record identity and payload hash. `USE_D
 ## Public API candidates deliberately not integrated
 
 The public-apis index was audited for useful geospatial feeds, but SIGNALWAKE
-does not bulk-import every listed service. OpenSky remains aircraft state
-rather than a hazard report, TransitLand requires a separate key and is better
-represented by vector tiles, and OpenAQ requires credentials and overlaps the
-AirNow air-quality role. These remain catalog/documentation candidates until a
-bounded contract, geometry semantics, freshness rule, and source-specific
-provenance path are justified.
+does not bulk-import every listed service. TransitLand requires a separate key
+and is better represented by vector tiles, and OpenAQ requires credentials and
+overlaps the AirNow air-quality role. These remain catalog/documentation
+candidates until a bounded contract, geometry semantics, freshness rule, and
+source-specific provenance path are justified.
 
 ## Infrastructure reference sources
 

@@ -354,3 +354,31 @@ keeps request metrics process-local and derives processing latency from actual
 persisted transformation runs. Source freshness uses each source's configured
 expected interval with a one-hour fallback; there is no scheduler or permanent
 background worker.
+
+## V2 map-only observation layer
+
+OpenSky Network is intentionally outside the canonical event table. The
+`OpenSkyAdapter` fetches a bounded CONUS state-vector response, validates the
+provider coordinate pair, and emits GeoJSON point features with stable
+`icao24` identity. A 90-second process-local cache limits anonymous API credit
+use; refresh failures return last-known-good features with `DEGRADED` metadata,
+or an honest empty/error response when no successful fetch exists. The
+projection has its own 8,000-record bound and `map_addressable_count`, so high
+observation density does not change the event API's 4,000-record contract.
+
+Aircraft state is descriptive only. The map never converts position, speed,
+altitude, or track into severity, danger, delay, disruption, or impact. The
+source remains attributed to OpenSky and official provider timestamps are
+retained separately from the fetch timestamp.
+
+## Forecast and prediction boundary
+
+No current SIGNALWAKE surface makes a prediction claim. A future `FORECAST`
+classification must remain separate from `OBSERVATION`, `LIVE`, and
+`DERIVED` records and carry the model version, feature window, horizon,
+training/data cutoff, and validation run. Candidate mathematical baselines
+include persistence, climatology, and calibrated logistic/Poisson models;
+evaluation must report calibration error and Brier score for probabilities,
+precision/recall for thresholded events, and temporal backtests against the
+baselines. A forecast may not be rendered as an observed event or used by the
+assessment/scenario formulas without an explicit validated contract.

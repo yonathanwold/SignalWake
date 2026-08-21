@@ -31,6 +31,7 @@ from app.adapters.layer_sources import (
 from app.adapters.nhc import NHCAdapter
 from app.adapters.nws import NWSAdapter
 from app.adapters.nws_observations import NWSObservationsAdapter
+from app.adapters.opensky import OpenSkyAdapter
 from app.adapters.road511 import Road511Adapter
 from app.adapters.usgs import USGSAdapter
 from app.adapters.usgs_water import USGSWaterAdapter
@@ -247,6 +248,15 @@ def adapters(settings: Settings):
 
 def layer_adapters(settings: Settings) -> dict[str, object]:
     return {
+        "opensky": OpenSkyAdapter(
+            settings.opensky_url,
+            settings.source_user_agent,
+            settings.request_timeout_seconds,
+            settings.adapter_version,
+            bbox=settings.opensky_bbox,
+            limit=settings.opensky_limit,
+            refresh_seconds=settings.opensky_refresh_seconds,
+        ),
         "open_meteo": OpenMeteoAdapter(
             settings.open_meteo_url,
             settings.source_user_agent,
@@ -319,6 +329,7 @@ async def lifespan(app: FastAPI):
     factory = session_factory(engine)
     app.state.startup_ready = False
     app.state.settings = settings
+    app.state.layer_adapters = layer_adapters(settings)
     app.state.engine = engine
     app.state.session_factory = factory
     await init_db(engine)
@@ -326,6 +337,9 @@ async def lifespan(app: FastAPI):
         configured_adapters = adapters(settings)
         for adapter in configured_adapters:
             await ensure_source(session, adapter)
+        # OpenSky is a map-only observation projection, but it still receives
+        # the same source-health/provenance state contract as event adapters.
+        await ensure_source(session, app.state.layer_adapters["opensky"])
         await session.commit()
         fallback_source_keys = {adapter.key for adapter in configured_adapters}
         if settings.ingest_on_startup:
@@ -729,7 +743,8 @@ async def layer_metadata(layer_key: str) -> dict[str, object]:
 
     if layer_key != "rainviewer":
         raise HTTPException(status_code=404, detail="Layer has no metadata overlay contract")
-    adapter = layer_adapters(get_settings())[layer_key]
+    adapter_map = getattr(app.state, "layer_adapters", None) or layer_adapters(get_settings())
+    adapter = adapter_map[layer_key]
     try:
         metadata = await adapter.fetch_metadata()  # type: ignore[attr-defined]
         return {"key": layer_key, **metadata}
@@ -765,9 +780,11 @@ def _event_layer_feature(item: EventResponse) -> dict[str, object] | None:
 @app.get("/layers/{layer_key}/data", response_model=LayerDataResponse, tags=["layers"])
 async def layer_data(
     layer_key: str,
-    limit: int = Query(200, ge=1, le=4000),
+    limit: int = Query(200, ge=1, le=10000),
     session: AsyncSession = Depends(session_dependency),
 ) -> LayerDataResponse:
+    if layer_key != "opensky" and limit > 4000:
+        raise HTTPException(status_code=422, detail="Layer limit cannot exceed 4000")
     specs = specs_by_key()
     spec = specs.get(layer_key)
     if spec is None:
@@ -777,8 +794,70 @@ async def layer_data(
     item = next(row for row in await catalog_items(session, window, generated_at=generated_at) if row.key == layer_key)
     features: list[dict[str, object]] = []
     overlay_provenance: dict[str, object] = {}
+    map_addressable_count: int | None = None
+    category_counts: dict[str, int] = {}
+    truncated = False
     if spec.source_key:
-        if layer_key in {
+        if layer_key == "opensky":
+            adapter_map = getattr(app.state, "layer_adapters", None) or layer_adapters(get_settings())
+            adapter = adapter_map[layer_key]
+            try:
+                features = (await adapter.fetch())[:limit]  # type: ignore[attr-defined]
+                map_addressable_count = len(features)
+                category_counts = {"observations": len(features)}
+                truncated = len(features) >= limit
+                overlay_provenance = {
+                    "provider": "OpenSky Network",
+                    "endpoint": adapter.endpoint,
+                    "request_endpoint": getattr(adapter, "request_endpoint", adapter.endpoint),
+                    "adapter": adapter.__class__.__name__,
+                    "classification": "OBSERVATION",
+                    "semantics": "current aircraft state vectors; not hazards or events",
+                    "cache_age_seconds": getattr(adapter, "cache_age_seconds", None),
+                    "refresh_seconds": getattr(adapter, "refresh_seconds", None),
+                    "lifecycle_status": getattr(adapter, "status", "LIVE"),
+                }
+                if getattr(adapter, "last_error", None):
+                    overlay_provenance["last_error"] = adapter.last_error
+                    item.status = "DEGRADED"
+                    item.error = adapter.last_error
+                else:
+                    item.status = "LIVE"
+                if hasattr(adapter, "key"):
+                    source = await ensure_source(session, adapter)  # type: ignore[arg-type]
+                    source.last_attempt_at = generated_at
+                    source.last_http_status = getattr(adapter, "last_http_status", None)
+                    source.last_records_retrieved = len(features)
+                    source.last_records_accepted = len(features)
+                    source.last_records_rejected = 0
+                    source.freshness_seconds = getattr(adapter, "cache_age_seconds", None)
+                    if getattr(adapter, "last_error", None):
+                        source.last_error = adapter.last_error
+                        source.last_failure_at = generated_at
+                        source.last_error_category = "provider_refresh"
+                    else:
+                        source.last_success_at = generated_at
+                        source.last_error = None
+                        source.last_error_category = None
+                    await session.commit()
+            except AdapterError as exc:
+                overlay_provenance = {
+                    "provider": "OpenSky Network",
+                    "endpoint": adapter.endpoint,
+                    "classification": "OBSERVATION",
+                }
+                item.status = "DEGRADED"
+                item.error = str(exc)
+                if hasattr(adapter, "key"):
+                    source = await ensure_source(session, adapter)  # type: ignore[arg-type]
+                    source.last_attempt_at = generated_at
+                    source.last_http_status = getattr(adapter, "last_http_status", None)
+                    source.last_error = str(exc)
+                    source.last_failure_at = generated_at
+                    source.last_error_category = "provider_refresh"
+                    source.freshness_seconds = None
+                    await session.commit()
+        elif layer_key in {
             "nws_alerts",
             "nws_observations",
             "usgs_earthquakes",
@@ -800,7 +879,8 @@ async def layer_data(
             )
             features = [feature for row in rows if (feature := _event_layer_feature(row)) is not None]
         elif layer_key in {"open_meteo", "nppes", "census"}:
-            adapter = layer_adapters(get_settings())[layer_key]
+            adapter_map = getattr(app.state, "layer_adapters", None) or layer_adapters(get_settings())
+            adapter = adapter_map[layer_key]
             try:
                 features = (await adapter.fetch())[:limit]  # type: ignore[attr-defined]
                 overlay_provenance = {"endpoint": adapter.endpoint, "adapter": adapter.__class__.__name__, "classification": "MODEL_FIELD" if layer_key == "open_meteo" else "REFERENCE"}
@@ -836,6 +916,9 @@ async def layer_data(
         geometry_kind=spec.geometry_kind,
         feature_count=len(features),
         bounded_limit=limit,
+        map_addressable_count=map_addressable_count if map_addressable_count is not None else len(features),
+        category_counts=category_counts,
+        truncated=truncated,
         features=features,
         provenance={**item.provenance, "source_url": item.endpoint, "adapter_version": item.adapter_version, **overlay_provenance},
         error=item.error,

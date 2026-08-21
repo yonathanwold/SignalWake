@@ -92,6 +92,9 @@ export type MapLayerData = {
   status: string;
   feature_count: number;
   bounded_limit: number;
+  map_addressable_count?: number | null;
+  category_counts?: Record<string, number>;
+  truncated?: boolean;
   features: Array<{ type: "Feature"; id?: string; properties?: Record<string, unknown>; geometry?: { type: string; coordinates: unknown } }>;
   provenance: Record<string, unknown>;
   error: string | null;

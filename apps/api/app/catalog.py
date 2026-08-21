@@ -85,6 +85,7 @@ CATALOG: tuple[CatalogSpec, ...] = (
     _spec("noaa_coops", "NOAA CO-OPS water levels", "coastal", "Point", "station observations", "observation time", True, "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter", "NEAR_REAL_TIME", source_key="noaa_coops", coverage={"mode": "bounded station set", "max_stations": 25, "max_features": 25}),
     _spec("nasa_eonet", "NASA EONET natural events", "natural_hazards", "Point/Line/Polygon", "curated near-real-time natural events", "geometry date and event closed time", True, "https://eonet.gsfc.nasa.gov/api/v3/events/geojson?status=all&days=2&bbox=-130,55,-60,20&limit=500", "NEAR_REAL_TIME", source_key="nasa_eonet", coverage={"mode": "bounded USA bbox", "days_max": 2, "max_features": 500}),
     _spec("aviation_weather", "Aviation Weather Center PIREPs", "aviation", "Point", "real aircraft reports", "observation or receipt time", True, "https://aviationweather.gov/api/data/pirep?age=48&format=geojson", "NEAR_REAL_TIME", source_key="aviation_weather", coverage={"mode": "single bounded query", "age_hours_max": 48, "max_features": 400}),
+    _spec("opensky", "OpenSky Network aircraft states", "aviation", "Point", "current aircraft observations", "provider time_position or last_contact", True, "https://opensky-network.org/api/states/all", "NEAR_REAL_TIME", source_key="opensky", coverage={"mode": "bounded CONUS state-vector query", "max_features": 8000, "classification": "OBSERVATION", "not_hazard": True}),
     _spec("road511", "Road511 traffic events", "transportation", "Point", "credentialed traffic events", "start, update, and end times", True, "https://api.road511.com/api/v1/events", "REQUIRES_CREDENTIALS", source_key="road511", coverage={"requires": "ROAD511_API_KEY", "mode": "bounded bbox plus jurisdiction", "max_features": 500}),
     _spec("open_meteo", "Open-Meteo model fields", "weather", "Point/Field", "forecast model field", "model run/current timestamp", True, "https://api.open-meteo.com/v1/forecast", "MODEL_FIELD", source_key="open_meteo", coverage={"mode": "18-point CONUS grid", "past_hours_max": 24, "max_features": 200, "not_observed": True}),
     _spec("rainviewer", "RainViewer radar overlay", "weather", "Raster/Tile", "radar tile overlay", "provider frame timestamp", True, "https://api.rainviewer.com/public/weather-maps.json", "NEAR_REAL_TIME", source_key="rainviewer", coverage={"mode": "metadata plus provider tile template", "markers": False}),
@@ -141,6 +142,8 @@ def _coverage(spec: CatalogSpec) -> dict[str, Any]:
         coverage.update({"bbox": settings.nasa_eonet_bbox, "days": settings.nasa_eonet_days, "max_features": settings.nasa_eonet_limit})
     elif spec.key == "aviation_weather":
         coverage.update({"bbox": settings.aviation_weather_bbox or None, "age_hours": settings.aviation_weather_age_hours, "max_features": settings.aviation_weather_limit})
+    elif spec.key == "opensky":
+        coverage.update({"bbox": settings.opensky_bbox, "max_features": settings.opensky_limit, "refresh_seconds": settings.opensky_refresh_seconds, "classification": "OBSERVATION", "not_hazard": True})
     elif spec.key == "fema_declarations":
         coverage.update({"max_features": settings.fema_declarations_limit, "semantics": "current designations, not historical declarations"})
     elif spec.key == "road511":
